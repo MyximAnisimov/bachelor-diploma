@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectModuleManager">
+    <modules>
+      <module fileurl="file://$PROJECT_DIR$/.idea/bachelor-diploma.iml" filepath="$PROJECT_DIR$/.idea/bachelor-diploma.iml" />
+      <module fileurl="file://$PROJECT_DIR$/backend/src/backend.iml" filepath="$PROJECT_DIR$/backend/src/backend.iml" />
+      <module fileurl="file://$PROJECT_DIR$/frontend/frontend.iml" filepath="$PROJECT_DIR$/frontend/frontend.iml" />
+      <module fileurl="file://$PROJECT_DIR$/backend/src/main/main.iml" filepath="$PROJECT_DIR$/backend/src/main/main.iml" />
+    </modules>
+  </component>
+</project>
