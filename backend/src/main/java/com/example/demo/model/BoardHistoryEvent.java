@@ -2,8 +2,13 @@ package com.example.demo.model;
 
 import com.example.demo.model.User;
 import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
+
 import java.time.Instant;
 
+@Getter
+@Setter
 @Entity
 @Table(name = "board_history_events")
 public class BoardHistoryEvent {
@@ -12,8 +17,10 @@ public class BoardHistoryEvent {
         ELEMENT_CREATED,
         ELEMENT_UPDATED,
         ELEMENT_DELETED,
+        ELEMENT_COPIED,
         ELEMENT_GROUPED,
         ELEMENT_UNGROUPED,
+        ELEMENT_REORDERED,
         BOARD_RENAMED,
     }
 
@@ -37,11 +44,11 @@ public class BoardHistoryEvent {
     private EventType eventType;
 
     @Lob
-    @Column(name = "before_state_json")
+    @Column(name = "before_state_json", columnDefinition = "text")
     private String beforeStateJson;
 
     @Lob
-    @Column(name = "after_state_json")
+    @Column(name = "after_state_json", columnDefinition = "text")
     private String afterStateJson;
 
     @Column(nullable = false, updatable = false)

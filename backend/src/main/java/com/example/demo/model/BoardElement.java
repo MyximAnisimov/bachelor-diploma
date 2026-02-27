@@ -2,8 +2,13 @@ package com.example.demo.model;
 
 import com.example.demo.model.User;
 import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
+
 import java.time.Instant;
 
+@Getter
+@Setter
 @Entity
 @Table(name = "board_elements")
 public class BoardElement {
@@ -71,7 +76,7 @@ public class BoardElement {
      *  - STICKY: { "text": "...", "backgroundColor": "#ff0", ... }
      */
     @Lob
-    @Column(name = "properties_json", nullable = false)
+    @Column(name = "properties_json", nullable = false, columnDefinition = "text")
     private String propertiesJson;
 
     @ManyToOne(fetch = FetchType.LAZY)

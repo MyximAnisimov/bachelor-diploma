@@ -2,10 +2,14 @@ package com.example.demo.model;
 
 import com.example.demo.model.User;
 import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
 
 import java.time.Instant;
 import java.util.UUID;
 
+@Getter
+@Setter
 @Entity
 @Table(name = "boards")
 public class Board {
@@ -32,4 +36,7 @@ public class Board {
 
     @Column(nullable = false)
     private Instant updatedAt = Instant.now();
+
+    @Column(name = "expires_at")
+    private Instant expiresAt;
 }
