@@ -17,7 +17,8 @@ CREATE TABLE boards (
     owner_id    BIGINT REFERENCES users(id),
     temporary   BOOLEAN      NOT NULL DEFAULT FALSE,
     created_at  TIMESTAMP    NOT NULL DEFAULT now(),
-    updated_at  TIMESTAMP    NOT NULL DEFAULT now()
+    updated_at  TIMESTAMP    NOT NULL DEFAULT now(),
+    expires_at  TIMESTAMP
 );
 
 -- ELEMENT GROUPS
@@ -86,8 +87,6 @@ CREATE TABLE board_history_events (
     after_state_json   TEXT,
     created_at         TIMESTAMP   NOT NULL DEFAULT now()
 );
-
--- Индексы (по желанию, но полезно)
 
 CREATE INDEX idx_boards_owner_id ON boards(owner_id);
 

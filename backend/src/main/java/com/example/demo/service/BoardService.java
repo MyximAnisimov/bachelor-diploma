@@ -13,7 +13,7 @@ public interface BoardService {
 //
 //    BoardDto createBoard(CreateBoardRequest request);
 //
-//    BoardDto getBoard(UUID boardUuid);
+    BoardDto getBoard(UUID boardUuid);
 //
 //    BoardDto updateBoard(UUID boardUuid, UpdateBoardRequest request);
 //
