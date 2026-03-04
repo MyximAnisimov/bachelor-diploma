@@ -1,5 +1,6 @@
 package com.example.demo.dto;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
@@ -20,4 +21,6 @@ public class ElementTransformRequest {
 
     @NotNull
     private Double rotation;
+
+    private JsonNode properties;
 }

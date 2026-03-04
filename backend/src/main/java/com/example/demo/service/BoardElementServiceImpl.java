@@ -249,6 +249,10 @@ public class BoardElementServiceImpl implements BoardElementService {
 //        authUser.getCurrentUser().ifPresent(element::setUpdatedBy);
         element.setUpdatedAt(Instant.now());
 
+        if (request.getProperties() != null) {
+            element.setPropertiesJson(toJsonSafe(request.getProperties()));
+        }
+
         elementRepository.save(element);
 
         BoardElementDto afterDto = elementMapper.toDto(element);

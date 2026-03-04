@@ -16,7 +16,7 @@ public class BoardElement {
     public enum ElementType {
         SHAPE,      // геометрические фигуры
         TEXT,       // текстовые блоки
-        STICKY,     // стикеры
+        STICKER,     // стикеры
         ARROW,      // стрелки/коннекторы
         BRUSH,      // мазки кисти/freehand
         MEDIA       // картинки, видео, pdf и т.п.

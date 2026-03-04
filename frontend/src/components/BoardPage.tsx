@@ -5,14 +5,17 @@ import { getBoardElements, createElement } from '../api/elements';
 import type { BoardDto, BoardElementDto } from '../api/types';
 import { BoardCanvas } from './BoardCanvas';
 
-type Tool = 'SELECT' | 'HAND';
+type Tool = 'SELECT' | 'HAND' | 'BRUSH' | 'TEXT' | 'STICKER' | 'ARROW';
 
 export const BoardPage: React.FC = () => {
   const { boardUuid } = useParams<{ boardUuid: string }>();
   const [board, setBoard] = useState<BoardDto | null>(null);
   const [elements, setElements] = useState<BoardElementDto[]>([]);
   const [loading, setLoading] = useState(true);
+
   const [tool, setTool] = useState<Tool>('SELECT');
+  const [brushSize, setBrushSize] = useState(4);
+  const [isEraser, setIsEraser] = useState(false);
 
   useEffect(() => {
     if (!boardUuid) return;
@@ -45,7 +48,7 @@ export const BoardPage: React.FC = () => {
         stroke: '#333',
       },
     });
-    setElements((prev) => [...prev, el]);
+    setElements(prev => [...prev, el]);
   };
 
   if (loading || !board) return <div>Загрузка...</div>;
@@ -73,6 +76,7 @@ export const BoardPage: React.FC = () => {
         >
           Выделение
         </button>
+
         <button
           onClick={() => setTool('HAND')}
           style={{
@@ -85,10 +89,89 @@ export const BoardPage: React.FC = () => {
         </button>
 
         <button
+          onClick={() => setTool('BRUSH')}
+          style={{
+            padding: '4px 8px',
+            background: tool === 'BRUSH' ? '#1976d2' : '#eee',
+            color: tool === 'BRUSH' ? '#fff' : '#000',
+          }}
+        >
+          Кисть
+        </button>
+
+        {tool === 'BRUSH' && (
+          <div
+            style={{
+              marginLeft: 16,
+              padding: '4px 8px',
+              border: '1px solid #ccc',
+              borderRadius: 4,
+              background: '#fafafa',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+            }}
+          >
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              Размер кисти
+                  <input
+                    type="range"
+                    min={1}
+                    max={40}
+                    value={brushSize}
+                    onChange={(e) => setBrushSize(Number(e.target.value))}
+                  />
+              <span>{brushSize}</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <input
+                type="checkbox"
+                checked={isEraser}
+                onChange={(e) => setIsEraser(e.target.checked)}
+              />
+              Ластик
+            </label>
+          </div>
+        )}
+
+        <button
           onClick={handleAddRect}
           style={{ marginLeft: 'auto', padding: '4px 8px' }}
         >
           Добавить прямоугольник
+        </button>
+
+        <button
+          onClick={() => setTool('TEXT')}
+          style={{
+            padding: '4px 8px',
+            background: tool === 'TEXT' ? '#1976d2' : '#eee',
+            color: tool === 'TEXT' ? '#fff' : '#000',
+          }}
+        >
+          Текст
+        </button>
+
+        <button
+          onClick={() => setTool('STICKER')}
+          style={{
+            padding: '4px 8px',
+            background: tool === 'STICKER' ? '#1976d2' : '#eee',
+            color: tool === 'STICKER' ? '#fff' : '#000',
+          }}
+        >
+          Стикер
+        </button>
+
+        <button
+          onClick={() => setTool('ARROW')}
+          style={{
+            padding: '4px 8px',
+            background: tool === 'ARROW' ? '#1976d2' : '#eee',
+            color: tool === 'ARROW' ? '#fff' : '#000',
+          }}
+        >
+          Стрелка
         </button>
       </header>
 
@@ -98,6 +181,8 @@ export const BoardPage: React.FC = () => {
           elements={elements}
           onElementsChange={setElements}
           tool={tool}
+          brushSize={brushSize}
+          isEraser={isEraser}
         />
       </div>
     </div>
