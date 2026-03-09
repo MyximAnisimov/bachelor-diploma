@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { getBoard } from '../api/boards';
 import { getBoardElements, createElement } from '../api/elements';
+import { useBoardWs } from '../hooks/useBoardsWs';
+import { clientId } from '../api/clientId';
 import type { BoardDto, BoardElementDto } from '../api/types';
 import { BoardCanvas } from './BoardCanvas';
 
@@ -16,6 +18,7 @@ export const BoardPage: React.FC = () => {
   const [tool, setTool] = useState<Tool>('SELECT');
   const [brushSize, setBrushSize] = useState(4);
   const [isEraser, setIsEraser] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
 
   useEffect(() => {
     if (!boardUuid) return;
@@ -50,6 +53,72 @@ export const BoardPage: React.FC = () => {
     });
     setElements(prev => [...prev, el]);
   };
+
+  const [locks, setLocks] = useState<Record<number, string>>({});
+  const [remoteCursors, setRemoteCursors] = useState<Record<string, { x: number; y: number }>>({});
+
+useBoardWs({
+  boardUuid,
+  onLockMessage: (msg) => {
+    console.log('LOCK MSG IN BoardPage', msg);
+    const { elementIds, clientId: owner, action, success, error } = msg;
+
+    if (success === false) {
+      if (owner === clientId) {
+        console.warn(
+          'Не удалось захватить элементы, уже заняты другим пользователем:',
+          elementIds,
+          error ?? '',
+        );
+        setSelectedIds((prev) => prev.filter((id) => !elementIds.includes(id)));
+      }
+      return;
+    }
+
+    setLocks((prev) => {
+      const copy: Record<number, string> = { ...prev };
+
+      if (action === 'LOCK') {
+        elementIds.forEach((id: number) => {
+          copy[id] = owner;
+        });
+      } else if (action === 'UNLOCK') {
+        elementIds.forEach((id: number) => {
+          if (copy[id] === owner) {
+            delete copy[id];
+          }
+        });
+      }
+
+      return copy;
+    });
+  },
+
+  onCursorMessage: (msg) => {
+    const { clientId: sender, x, y } = msg;
+    if (sender === clientId) return;
+    setRemoteCursors((prev) => ({
+      ...prev,
+      [sender]: { x, y },
+    }));
+  },
+
+  onElementMessage: (msg) => {
+    setElements((prev) => {
+      if (msg.action === 'DELETE') {
+        return prev.filter((el) => el.id !== msg.element.id);
+      }
+      const exists = prev.some((el) => el.id === msg.element.id);
+      if (exists) {
+        return prev.map((el) =>
+          el.id === msg.element.id ? msg.element : el,
+        );
+      }
+      return [...prev, msg.element];
+    });
+  },
+});
+
 
   if (loading || !board) return <div>Загрузка...</div>;
 
@@ -181,8 +250,13 @@ export const BoardPage: React.FC = () => {
           elements={elements}
           onElementsChange={setElements}
           tool={tool}
+          locks={locks}
+          clientId={clientId}
           brushSize={brushSize}
           isEraser={isEraser}
+          remoteCursors={remoteCursors}
+          selectedIds={selectedIds}
+          setSelectedIds={setSelectedIds}
         />
       </div>
     </div>

@@ -23,4 +23,6 @@ public class ElementTransformRequest {
     private Double rotation;
 
     private JsonNode properties;
+
+    private String clientId;
 }

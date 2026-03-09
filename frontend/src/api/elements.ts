@@ -1,4 +1,5 @@
 import { api } from './http';
+import { clientId } from './clientId';
 import type {
   BoardElementDto,
   BoardElementCreateRequest,
@@ -34,11 +35,21 @@ export async function updateElement(
 export async function transformElement(
   boardUuid: string,
   elementId: number,
-  req: ElementTransformRequest,
-): Promise<BoardElementDto> {
+  dto: BoardElementDto,
+) {
+  const body = {
+    x: dto.x,
+    y: dto.y,
+    width: dto.width,
+    height: dto.height,
+    rotation: dto.rotation,
+    properties: dto.properties,
+    clientId, // НОВОЕ
+  };
+
   const res = await api.patch<BoardElementDto>(
     `/api/boards/${boardUuid}/elements/${elementId}/transform`,
-    req,
+    body,
   );
   return res.data;
 }

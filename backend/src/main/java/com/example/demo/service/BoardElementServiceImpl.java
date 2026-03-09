@@ -12,6 +12,7 @@ import com.example.demo.dto.GroupElementsRequest;
 import com.example.demo.dto.GroupElementsResponse;
 import com.example.demo.dto.ReorderElementsRequest;
 import com.example.demo.dto.UngroupElementsRequest;
+import com.example.demo.dto.ws.ElementUpdatedMessage;
 import com.example.demo.exception.NotFoundException;
 import com.example.demo.mapper.BoardElementMapper;
 import com.example.demo.model.Board;
@@ -27,6 +28,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.ValidationException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -46,6 +48,8 @@ public class BoardElementServiceImpl implements BoardElementService {
     private final BoardElementRepository elementRepository;
     private final ElementGroupRepository groupRepository;
     private final BoardHistoryEventRepository historyRepository;
+    private final SimpMessagingTemplate messagingTemplate;
+    private final ElementLockService elementLockService;
 
     private final BoardElementMapper elementMapper;
     private final ObjectMapper objectMapper;
@@ -73,7 +77,6 @@ public class BoardElementServiceImpl implements BoardElementService {
         try {
             return objectMapper.writeValueAsString(obj);
         } catch (JsonProcessingException e) {
-            // логирование по-хорошему
             return null;
         }
     }
@@ -131,7 +134,6 @@ public class BoardElementServiceImpl implements BoardElementService {
         element.setRotation(request.getRotation() != null ? request.getRotation() : 0.0);
         element.setZIndex(request.getZIndex() != null ? request.getZIndex() : calcNextZIndex(board));
 
-        // groupId -> ElementGroup
         if (request.getGroupId() != null) {
             UUID groupUuid = UUID.fromString(request.getGroupId());
             ElementGroup group = groupRepository
@@ -140,7 +142,6 @@ public class BoardElementServiceImpl implements BoardElementService {
             element.setGroup(group);
         }
 
-        // mediaId (если используешь MediaAsset — здесь нужно найти и проставить)
         if (request.getMediaId() != null) {
             // TODO: найти MediaAsset и сделать element.setMedia(...)
         }
@@ -161,6 +162,16 @@ public class BoardElementServiceImpl implements BoardElementService {
         elementRepository.save(element);
 
         BoardElementDto dto = elementMapper.toDto(element);
+
+        ElementUpdatedMessage msg = new ElementUpdatedMessage();
+        msg.setBoardUuid(boardUuid);
+        msg.setElement(dto);
+        msg.setAction("UPSERT");
+
+        messagingTemplate.convertAndSend(
+                "/topic/boards/" + boardUuid + "/elements",
+                msg
+        );
         saveHistory(board, element.getId(), BoardHistoryEvent.EventType.ELEMENT_CREATED, null, dto);
 
         return dto;
@@ -234,9 +245,11 @@ public class BoardElementServiceImpl implements BoardElementService {
         Board board = getBoardOrThrow(boardUuid);
         BoardElement element = getElementForBoardOrThrow(board, elementId);
 
-        if (element.isLockedPosition()) {
-            throw new ValidationException("Element position is locked");
-        }
+        elementLockService.getLockOwner(boardUuid, elementId).ifPresent(owner -> {
+            if (!owner.equals(request.getClientId())) {
+                throw new ValidationException("Element is locked by another user");
+            }
+        });
 
         BoardElementDto beforeDto = elementMapper.toDto(element);
 
@@ -256,6 +269,16 @@ public class BoardElementServiceImpl implements BoardElementService {
         elementRepository.save(element);
 
         BoardElementDto afterDto = elementMapper.toDto(element);
+
+        ElementUpdatedMessage msg = new ElementUpdatedMessage();
+        msg.setBoardUuid(boardUuid);
+        msg.setElement(afterDto);
+        msg.setAction("UPSERT");
+
+        messagingTemplate.convertAndSend(
+                "/topic/boards/" + boardUuid + "/elements",
+                msg
+        );
         saveHistory(board, element.getId(), BoardHistoryEvent.EventType.ELEMENT_UPDATED, beforeDto, afterDto);
 
         return afterDto;
@@ -399,11 +422,27 @@ public class BoardElementServiceImpl implements BoardElementService {
         Board board = getBoardOrThrow(boardUuid);
         BoardElement element = getElementForBoardOrThrow(board, elementId);
 
+//        elementLockService.getLockOwner(boardUuid, elementId).ifPresent(owner -> {
+//            if (!owner.equals(clientId)) {
+//                throw new ValidationException("Element is locked by another user");
+//            }
+//        });
+
         BoardElementDto beforeDto = elementMapper.toDto(element);
 
         elementRepository.delete(element);
 
         saveHistory(board, elementId, BoardHistoryEvent.EventType.ELEMENT_DELETED, beforeDto, null);
+
+        ElementUpdatedMessage msg = new ElementUpdatedMessage();
+        msg.setBoardUuid(boardUuid);
+        msg.setElement(beforeDto);
+        msg.setAction("DELETE");
+
+        messagingTemplate.convertAndSend(
+                "/topic/boards/" + boardUuid + "/elements",
+                msg
+        );
     }
 
     @Override

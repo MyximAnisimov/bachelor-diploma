@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Stage, Layer, Rect, Transformer, Line } from 'react-konva';
+import { Stage, Layer, Rect, Transformer, Line, Group, Circle } from 'react-konva';
 import type { KonvaEventObject } from 'konva/lib/Node';
 import type { Dispatch, SetStateAction } from 'react';
 import type { BoardElementDto } from '../api/types';
+import { useBoardWs, sendLock, sendCursor } from '../hooks/useBoardsWs';
 import { transformElement, deleteElement, createElement } from '../api/elements';
 import { ShapeElement } from '../elements/ShapeElement';
 import { BrushElement } from '../elements/BrushElement';
@@ -19,6 +20,11 @@ interface Props {
   tool: Tool;
   brushSize: number;
   isEraser: boolean;
+  clientId: string;
+  locks: Record<number, string>;
+  remoteCursors: Record<string, { x: number; y: number }>;
+  selectedIds: number[];                           // ←
+  setSelectedIds: Dispatch<SetStateAction<number[]>>;
 }
 
 interface SelectionRectState {
@@ -58,9 +64,13 @@ export const BoardCanvas: React.FC<Props> = ({
   onElementsChange,
   brushSize,
   tool,
-  isEraser
+  isEraser,
+  locks,
+  clientId,
+  remoteCursors,
+  selectedIds,
+  setSelectedIds,
 }) => {
-  const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [selectionRect, setSelectionRect] = useState<SelectionRectState>({
     visible: false,
     x1: 0,
@@ -120,6 +130,25 @@ export const BoardCanvas: React.FC<Props> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedIds]);
 
+const prevSelectedRef = useRef<number[]>([]);
+
+useEffect(() => {
+  const prev = prevSelectedRef.current;
+  const curr = selectedIds;
+
+  const added = curr.filter((id) => !prev.includes(id));
+  const removed = prev.filter((id) => !curr.includes(id));
+
+  if (added.length > 0) {
+    sendLock(boardUuid, added, 'LOCK');
+  }
+  if (removed.length > 0) {
+    sendLock(boardUuid, removed, 'UNLOCK');
+  }
+
+  prevSelectedRef.current = curr;
+}, [selectedIds, boardUuid]);
+
     const [textEditor, setTextEditor] = useState<{
       id: number;
       value: string;
@@ -159,6 +188,18 @@ export const BoardCanvas: React.FC<Props> = ({
         console.error('Failed to save element', err);
       }
     };
+
+const handleMouseMove = (e: KonvaEventObject<MouseEvent>) => {
+  const stage = e.target.getStage();
+  if (!stage) return;
+  const pointerPos = stage.getPointerPosition();
+  if (!pointerPos) return;
+
+  const logicalX = (pointerPos.x - stagePos.x) / stageScale;
+  const logicalY = (pointerPos.y - stagePos.y) / stageScale;
+
+  sendCursor(boardUuid, logicalX, logicalY);
+};
 
   const handleDeleteSelected = async () => {
     const idsToDelete = [...selectedIds];
@@ -302,7 +343,6 @@ const handleBrushMouseUp = async (e: KonvaEventObject<MouseEvent>) => {
   const points = brushPoints;
   setBrushPoints(null);
 
-  // 1) считаем bounding box
   let minX = points[0];
   let minY = points[1];
   let maxX = points[0];
@@ -622,7 +662,6 @@ const handleElementClick = (
 
         onElementsChange(prev => [...prev, el]);
         setSelectedIds([el.id]);
-        // openTextEditorForElement(el);
       }
     } catch (err) {
       console.error('Failed to create element', err);
@@ -693,6 +732,7 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
             handleCreateElementOnClick(e);
           }}
           onMouseMove={(e) => {
+             handleMouseMove(e);
             handleStageMouseMove(e);
             handleBrushMouseMove(e);
           }}
@@ -702,100 +742,114 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
           }}
           onWheel={handleStageWheel}
       >
+
+        <Layer listening={false}>
+          {Object.entries(remoteCursors).map(([id, pos]) => (
+            <Group key={id} x={pos.x} y={pos.y}>
+              <Circle radius={4} fill="red" />
+            </Group>
+          ))}
+        </Layer>
+
         <Layer>
-          {sortedElements.map((el) => {
-            if (el.type === 'SHAPE') {
-              return (
-                <ShapeElement
-                  key={el.id}
-                  element={el}
-                  isSelected={selectedIds.includes(el.id)}
-                  canDrag={canDragElements}
-                  onClick={(evt) => handleElementClick(el, evt)}
-                  onContextMenu={(evt) => handleElementContextMenu(el, evt)}
-                  onChange={handleElementChange}
-                  registerNode={(node) => {
-                    nodeRefs.current[el.id] = node;
-                  }}
-                />
-              );
-            }
+            {sortedElements.map((el) => {
+              const isLockedByOther =
+                locks[el.id] !== undefined && locks[el.id] !== clientId;
+                 console.log('ELEMENT', el.id, 'lockOwner:', locks[el.id], 'isLockedByOther:', isLockedByOther);
 
-            if (el.type === 'BRUSH') {
-              return (
-                <BrushElement
-                  key={el.id}
-                  element={el}
-                  isSelected={selectedIds.includes(el.id)}
-                  canDrag={canDragElements}
-                  onClick={(evt) => handleElementClick(el, evt)}
-                  onContextMenu={(evt) => handleElementContextMenu(el, evt)}
-                  onChange={handleElementChange}
-                  registerNode={(node) => {
-                    nodeRefs.current[el.id] = node;
-                  }}
-                />
-              );
-            }
+              if (el.type === 'SHAPE') {
+                return (
+                  <ShapeElement
+                    key={el.id}
+                    element={el}
+                    isSelected={selectedIds.includes(el.id)}
+                    canDrag={tool === 'SELECT' && !isLockedByOther && !el.lockedPosition}
+                    onClick={(evt) => handleElementClick(el, evt)}
+                    onContextMenu={(evt) => handleElementContextMenu(el, evt)}
+                    onChange={handleElementChange}
+                    registerNode={(node) => {
+                      nodeRefs.current[el.id] = node;
+                    }}
+                  />
+                );
+              }
 
-            if (el.type === 'TEXT') {
-              return (
-                <TextElement
-                  key={el.id}
-                  element={el}
-                  isSelected={selectedIds.includes(el.id)}
-                  canDrag={canDragElements}
-                  onClick={(evt) => handleElementClick(el, evt)}
-                  onContextMenu={(evt) => handleElementContextMenu(el, evt)}
-                  onDblClick={() => openTextEditorForElement(el)}
-                  onChange={handleElementChange}
-                  registerNode={(node) => {
-                    nodeRefs.current[el.id] = node;
-                  }}
-                />
-              );
-            }
+              if (el.type === 'BRUSH') {
+                return (
+                  <BrushElement
+                    key={el.id}
+                    element={el}
+                    isSelected={selectedIds.includes(el.id)}
+                    canDrag={canDragElements && !isLockedByOther && tool === 'SELECT'}
+                    onClick={(evt) => handleElementClick(el, evt)}
+                    onContextMenu={(evt) => handleElementContextMenu(el, evt)}
+                    onChange={handleElementChange}
+                    registerNode={(node) => {
+                      nodeRefs.current[el.id] = node;
+                    }}
+                  />
+                );
+              }
 
-            if (el.type === 'STICKER') {
-              return (
-                <StickerElement
-                  key={el.id}
-                  element={el}
-                  isSelected={
-                    tool === 'ARROW'
-                      ? arrowDraft?.fromId === el.id
-                      : selectedIds.includes(el.id)
-                  }
-                  canDrag={canDragElements}
-                  onClick={(evt) => handleElementClick(el, evt)}
-                  onContextMenu={(evt) => handleElementContextMenu(el, evt)}
-                  onDblClick={() => openTextEditorForElement(el)}
-                  onChange={handleElementChange}
-                  registerNode={(node) => {
-                    nodeRefs.current[el.id] = node;
-                  }}
-                  showAnchors={tool === 'ARROW'}
-                />
-              );
-            }
+              if (el.type === 'TEXT') {
+                return (
+                  <TextElement
+                    key={el.id}
+                    element={el}
+                    isSelected={selectedIds.includes(el.id)}
+                    canDrag={canDragElements && !isLockedByOther && tool === 'SELECT'}
+                    onClick={(evt) => handleElementClick(el, evt)}
+                    onContextMenu={(evt) => handleElementContextMenu(el, evt)}
+                    onDblClick={() => openTextEditorForElement(el)}
+                    onChange={handleElementChange}
+                    registerNode={(node) => {
+                      nodeRefs.current[el.id] = node;
+                    }}
+                  />
+                );
+              }
 
-            if (el.type === 'ARROW') {
-              return (
-                <ArrowElement
-                  key={el.id}
-                  element={el}
-                  allElements={elements}
-                  isSelected={selectedIds.includes(el.id)}
-                  onClick={(evt) => handleElementClick(el, evt)}
-                  onContextMenu={(evt) => handleElementContextMenu(el, evt)}
-                  onChange={handleElementChange}
-                  canEdit={tool === 'ARROW'}
-                />
-              );
-            }
+              if (el.type === 'STICKER') {
+                return (
+                  <StickerElement
+                    key={el.id}
+                    element={el}
+                    isSelected={
+                      tool === 'ARROW'
+                        ? arrowDraft?.fromId === el.id
+                        : selectedIds.includes(el.id)
+                    }
+                    canDrag={canDragElements && !isLockedByOther && tool === 'SELECT'}
+                    onClick={(evt) => handleElementClick(el, evt)}
+                    onContextMenu={(evt) => handleElementContextMenu(el, evt)}
+                    onDblClick={() => openTextEditorForElement(el)}
+                    onChange={handleElementChange}
+                    registerNode={(node) => {
+                      nodeRefs.current[el.id] = node;
+                    }}
+                    showAnchors={tool === 'ARROW'}
+                  />
+                );
+              }
 
-            return null;
-          })}
+              if (el.type === 'ARROW') {
+                const canEdit = tool === 'ARROW' && !isLockedByOther;
+                return (
+                  <ArrowElement
+                    key={el.id}
+                    element={el}
+                    allElements={elements}
+                    isSelected={selectedIds.includes(el.id)}
+                    onClick={(evt) => handleElementClick(el, evt)}
+                    onContextMenu={(evt) => handleElementContextMenu(el, evt)}
+                    onChange={handleElementChange}
+                    canEdit={canEdit}
+                  />
+                );
+              }
+
+              return null;
+            })}
 
           <Transformer
             ref={transformerRef}
