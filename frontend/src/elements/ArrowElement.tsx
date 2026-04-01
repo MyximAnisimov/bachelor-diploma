@@ -11,6 +11,7 @@ interface Props {
   onContextMenu: (e: KonvaEventObject<PointerEvent>) => void;
   onChange: (updated: BoardElementDto) => void;
   canEdit: boolean;
+  canDrag: boolean;
 }
 
 function getStickerAnchors(el: BoardElementDto) {
@@ -58,21 +59,52 @@ export const ArrowElement: React.FC<Props> = ({
   onContextMenu,
   onChange,
   canEdit,
+  canDrag,
 }) => {
   const props = element.properties || {};
-  const fromId: number | undefined = props.fromId;
-  const toId: number | undefined = props.toId;
-  const fromAnchorIndex: number = props.fromAnchorIndex ?? 0;
-  const toAnchorIndex: number = props.toAnchorIndex ?? 0;
-  const color: string = props.color || '#000000';
-  const strokeWidth: number = props.strokeWidth || 2;
+const fromId: number | undefined = (props as any).fromId;
+const toId: number | undefined = (props as any).toId;
+const fromAnchorIndex: number = (props as any).fromAnchorIndex ?? 0;
+const toAnchorIndex: number = (props as any).toAnchorIndex ?? 0;
 
+const color: string = (props as any).color || '#000000';
+const strokeWidth: number = (props as any).strokeWidth || 2;
+
+const x1: number | undefined = (props as any).x1;
+const y1: number | undefined = (props as any).y1;
+const x2: number | undefined = (props as any).x2;
+const y2: number | undefined = (props as any).y2;
+
+const propsAny = element.properties as any;
+const hasFreeCoords =
+  typeof propsAny.x1 === 'number' &&
+  typeof propsAny.y1 === 'number' &&
+  typeof propsAny.x2 === 'number' &&
+  typeof propsAny.y2 === 'number';
+
+let baseFromPoint: { x: number; y: number } | null = null;
+let baseToPoint: { x: number; y: number } | null = null;
+
+if (fromId != null && toId != null) {
   const fromEl = allElements.find((el) => el.id === fromId);
   const toEl = allElements.find((el) => el.id === toId);
-  if (!fromEl || !toEl) return null;
+  if (!fromEl || !toEl) {
+    return null;
+  }
+  baseFromPoint = getAnchorWorldPoint(fromEl, fromAnchorIndex);
+  baseToPoint = getAnchorWorldPoint(toEl, toAnchorIndex);
+} else if (
+  typeof x1 === 'number' &&
+  typeof y1 === 'number' &&
+  typeof x2 === 'number' &&
+  typeof y2 === 'number'
+) {
 
-  const fromPoint = getAnchorWorldPoint(fromEl, fromAnchorIndex);
-  const toPoint = getAnchorWorldPoint(toEl, toAnchorIndex);
+  baseFromPoint = { x: x1, y: y1 };
+  baseToPoint = { x: x2, y: y2 };
+} else {
+  return null;
+}
 
   const [tempFromPoint, setTempFromPoint] = useState<{ x: number; y: number } | null>(null);
   const [tempToPoint, setTempToPoint] = useState<{ x: number; y: number } | null>(null);
@@ -121,69 +153,126 @@ export const ArrowElement: React.FC<Props> = ({
       }
     };
 
-  const handleEndDragEnd =
-    (kind: 'from' | 'to') =>
-    (e: KonvaEventObject<DragEvent>) => {
-      if (!canEdit) return;
+    const handleEndDragEnd =
+      (kind: 'from' | 'to') =>
+      (e: KonvaEventObject<DragEvent>) => {
+        if (!canEdit) return;
+        const node = e.target;
+        const pos = node.getAbsolutePosition();
+        const nearest = findNearestStickerAnchor(pos);
 
-      const node = e.target;
-      const pos = node.getAbsolutePosition();
+        if (kind === 'from') {
+          setTempFromPoint(null);
+        } else {
+          setTempToPoint(null);
+        }
 
-      const nearest = findNearestStickerAnchor(pos);
+        const p = element.properties as any;
+        const hasFreeCoords =
+          typeof p.x1 === 'number' &&
+          typeof p.y1 === 'number' &&
+          typeof p.x2 === 'number' &&
+          typeof p.y2 === 'number';
 
-      if (kind === 'from') {
-        setTempFromPoint(null);
-      } else {
-        setTempToPoint(null);
-      }
+        if (!nearest) {
+          if (hasFreeCoords) {
+            if (kind === 'from') {
+              const updated: BoardElementDto = {
+                ...element,
+                properties: {
+                  ...p,
+                  x1: pos.x,
+                  y1: pos.y,
+                },
+              };
+              onChange(updated);
+            } else {
+              const updated: BoardElementDto = {
+                ...element,
+                properties: {
+                  ...p,
+                  x2: pos.x,
+                  y2: pos.y,
+                },
+              };
+              onChange(updated);
+            }
+          }
+          return;
+        }
 
-      if (!nearest) {
-        return;
-      }
+        const { sticker, anchorIndex } = nearest;
+        if (kind === 'from') {
+          const updated: BoardElementDto = {
+            ...element,
+            properties: {
+              ...p,
+              fromId: sticker.id,
+              fromAnchorIndex: anchorIndex,
+            },
+          };
+          onChange(updated);
+        } else {
+          const updated: BoardElementDto = {
+            ...element,
+            properties: {
+              ...p,
+              toId: sticker.id,
+              toAnchorIndex: anchorIndex,
+            },
+          };
+          onChange(updated);
+        }
+      };
 
-      const { sticker, anchorIndex } = nearest;
-
-      if (kind === 'from') {
-        const updated: BoardElementDto = {
-          ...element,
-          properties: {
-            ...props,
-            fromId: sticker.id,
-            fromAnchorIndex: anchorIndex,
-          },
-        };
-        onChange(updated);
-      } else {
-        const updated: BoardElementDto = {
-          ...element,
-          properties: {
-            ...props,
-            toId: sticker.id,
-            toAnchorIndex: anchorIndex,
-          },
-        };
-        onChange(updated);
-      }
-    };
-
-  const start = tempFromPoint ?? fromPoint;
-  const end = tempToPoint ?? toPoint;
+const start = tempFromPoint ?? baseFromPoint!;
+const end = tempToPoint ?? baseToPoint!;
 
   return (
     <>
-      <Arrow
-        points={[start.x, start.y, end.x, end.y]}
-        stroke={isSelected ? '#00a1ff' : color}
-        fill={isSelected ? '#00a1ff' : color}
-        strokeWidth={strokeWidth}
-        pointerLength={12}
-        pointerWidth={10}
-        lineCap="round"
-        lineJoin="round"
-        onClick={onClick}
-        onTap={onClick}
-        onContextMenu={onContextMenu}
-      />
+        <Arrow
+          points={[start.x, start.y, end.x, end.y]}
+          stroke={isSelected ? '#00a1ff' : color}
+          fill={isSelected ? '#00a1ff' : color}
+          strokeWidth={strokeWidth}
+          pointerLength={12}
+          pointerWidth={10}
+          lineCap="round"
+          lineJoin="round"
+          onClick={onClick}
+          onTap={onClick}
+          onContextMenu={onContextMenu}
+          draggable={canDrag}
+          onDragEnd={(e) => {
+            if (!canDrag) return;
+            const node = e.target;
+            const dx = node.x();
+            const dy = node.y();
+
+            if (hasFreeCoords) {
+              const updated: BoardElementDto = {
+                ...element,
+                properties: {
+                  ...p,
+                  x1: p.x1 + dx,
+                  y1: p.y1 + dy,
+                  x2: p.x2 + dx,
+                  y2: p.y2 + dy,
+                },
+              };
+              node.position({ x: 0, y: 0 });
+              onChange(updated);
+            } else {
+              const updated: BoardElementDto = {
+                ...element,
+                x: (element.x || 0) + dx,
+                y: (element.y || 0) + dy,
+              };
+              node.position({ x: 0, y: 0 });
+              onChange(updated);
+            }
+          }}
+        />
 
       {canEdit && isSelected && (
         <>

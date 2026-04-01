@@ -379,6 +379,7 @@ console.log('RENDER BoardPage', { loading, board });
           selectedIds={selectedIds}
           setSelectedIds={setSelectedIds}
           shapeKind={shapeKind}
+          setTool={setTool}
         />
       </div>
     </div>

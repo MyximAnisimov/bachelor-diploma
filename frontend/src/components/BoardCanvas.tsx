@@ -18,14 +18,29 @@ interface Props {
   elements: BoardElementDto[];
   onElementsChange: Dispatch<SetStateAction<BoardElementDto[]>>;
   tool: Tool;
+  setTool: (tool: Tool) => void;
   shapeKind: ShapeKind;
   brushSize: number;
+  brushColor: string;
   isEraser: boolean;
   clientId: string;
   locks: Record<number, string>;
   remoteCursors: Record<string, { x: number; y: number }>;
   selectedIds: number[];                           // ←
   setSelectedIds: Dispatch<SetStateAction<number[]>>;
+}
+
+interface ArrowProperties {
+  fromId?: number;
+  toId?: number;
+  fromAnchorIndex?: number;
+  toAnchorIndex?: number;
+  x1?: number;
+  y1?: number;
+  x2?: number;
+  y2?: number;
+  color: string;
+  strokeWidth: number;
 }
 
 interface SelectionRectState {
@@ -64,7 +79,9 @@ export const BoardCanvas: React.FC<Props> = ({
   elements,
   onElementsChange,
   brushSize,
+  brushColor,
   tool,
+  setTool,
   isEraser,
   locks,
   clientId,
@@ -104,7 +121,9 @@ const [shapeColorPicker, setShapeColorPicker] = useState<{
   mode: 'fill' | 'stroke';
 } | null>(null);
 
-const [brushColor, setBrushColor] = useState('#000000');
+const [freeArrowStart, setFreeArrowStart] = useState<{ x: number; y: number } | null>(null);
+const [freeArrowEnd, setFreeArrowEnd] = useState<{ x: number; y: number } | null>(null);
+
 
 
   const width = window.innerWidth;
@@ -166,14 +185,17 @@ useEffect(() => {
   prevSelectedRef.current = curr;
 }, [selectedIds, boardUuid]);
 
-    const [textEditor, setTextEditor] = useState<{
-      id: number;
-      value: string;
-      x: number;
-      y: number;
-      width: number;
-      height: number;
-    } | null>(null);
+const [textEditor, setTextEditor] = useState<{
+  id: number;
+  value: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  fontSize: number;
+  fontFamily: string;
+  color: string;
+} | null>(null);
 
     useEffect(() => {
       if (textEditor && textAreaRef.current) {
@@ -259,19 +281,42 @@ const handleMouseMove = (e: KonvaEventObject<MouseEvent>) => {
   };
 
 const handleStageMouseDown = (e: KonvaEventObject<MouseEvent>) => {
+  if (textEditor) {
+    const stage = e.target.getStage();
+    if (!stage) return;
+
+    const isClickOnStage = e.target === stage;
+    if (isClickOnStage) {
+      const { id, value } = textEditor;
+      setTextEditor(null);
+
+      const el = elements.find((el) => el.id === id);
+      if (!el) return;
+
+      if (!value.trim()) {
+        handleDeleteElement(id);
+      } else {
+        const updated: BoardElementDto = {
+          ...el,
+          properties: {
+            ...(el.properties || {}),
+            text: value,
+          },
+        };
+        handleElementChange(updated);
+      }
+      return;
+    }
+  }
+
   closeContextMenu();
-
   if (tool !== 'SELECT') return;
-
   const stage = e.target.getStage();
   if (!stage) return;
-
   const isEmpty = e.target === stage;
   if (!isEmpty) return;
-
   const pos = getPointerPositionLogical(stage);
   if (!pos) return;
-
   setSelectedIds([]);
   setSelectionRect({
     visible: true,
@@ -406,28 +451,34 @@ const handleBrushMouseUp = async (e: KonvaEventObject<MouseEvent>) => {
   }
 };
 
-    const openTextEditorForElement = (el: BoardElementDto) => {
-      const text = (el.properties as any)?.text || '';
+const openTextEditorForElement = (el: BoardElementDto) => {
+  const props = (el.properties || {}) as any;
+  const text = props.text || '';
+  const fontSize = props.fontSize ?? 18;
+  const fontFamily = props.fontFamily ?? 'Arial';
+  const color = props.color ?? '#000000';
 
-      const x = stagePos.x + el.x * stageScale;
-      const y = stagePos.y + el.y * stageScale;
-      const width = el.width * stageScale;
-      const height = el.height * stageScale;
+  const x = stagePos.x + el.x * stageScale;
+  const y = stagePos.y + el.y * stageScale;
+  const width = el.width * stageScale;
+  const height = el.height * stageScale;
 
-      setTextEditor({
-        id: el.id,
-        value: text,
-        x,
-        y,
-        width,
-        height,
-      });
-    };
+  setTextEditor({
+    id: el.id,
+    value: text,
+    x,
+    y,
+    width,
+    height,
+    fontSize,
+    fontFamily,
+    color,
+  });
+};
 
 const commitTextEditor = async () => {
   if (!textEditor) return;
-  const { id, value } = textEditor;
-
+  const { id, value, fontSize, fontFamily, color } = textEditor;
   setTextEditor(null);
 
   const el = elements.find((e) => e.id === id);
@@ -438,16 +489,39 @@ const commitTextEditor = async () => {
     properties: {
       ...(el.properties || {}),
       text: value,
+      fontSize,
+      fontFamily,
+      color,
     },
   };
 
-    console.log('commitTextEditor updated', updated);
   await handleElementChange(updated);
 };
+
 
 const handleTextEditorChange: React.ChangeEventHandler<HTMLTextAreaElement> = (e) => {
   const v = e.target.value;
   setTextEditor((prev) => (prev ? { ...prev, value: v } : prev));
+
+  if (!textEditor) return;
+  const el = elements.find((e) => e.id === textEditor.id);
+  if (!el) return;
+
+  const props = (el.properties || {}) as any;
+  const updated: BoardElementDto = {
+    ...el,
+    properties: {
+      ...props,
+      text: v,
+      fontSize: textEditor.fontSize,
+      fontFamily: textEditor.fontFamily,
+      color: textEditor.color,
+    },
+  };
+
+  onElementsChange((prev) =>
+    prev.map((x) => (x.id === updated.id ? updated : x)),
+  );
 };
 
 const createArrowBetweenStickers = async (
@@ -705,6 +779,8 @@ const handleEraserDown = (e: KonvaEventObject<MouseEvent>) => {
           },
         });
 
+        setTool('SELECT');
+
         setSelectedIds([el.id]);
         openTextEditorForElement(el);
       }
@@ -801,61 +877,107 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
       ref={containerRef}
       style={{ width: '100%', height: '100%', position: 'relative' }}
     >
-      <Stage
-          width={width}
-          height={height}
-          style={{ background: '#f5f5f5' }}
-          x={stagePos.x}
-          y={stagePos.y}
-          scaleX={stageScale}
-          scaleY={stageScale}
-          draggable={tool === 'HAND'}
-          onDragEnd={handleStageDragEnd}
-            onMouseDown={(e) => {
-              handleStageMouseDown(e);
+    <Stage
+      width={width}
+      height={height}
+      style={{ background: '#f5f5f5' }}
+      x={stagePos.x}
+      y={stagePos.y}
+      scaleX={stageScale}
+      scaleY={stageScale}
+      draggable={tool === 'HAND'}
+      onDragEnd={handleStageDragEnd}
+      onMouseDown={(e) => {
+        handleStageMouseDown(e);
 
-              if (tool === 'BRUSH') {
-                if (isEraser) {
-                  handleEraserDown(e);
-                } else {
-                  handleBrushMouseDown(e);
-                }
-              } else {
-                handleCreateElementOnClick(e);
-              }
-            }}
-            onMouseMove={(e) => {
-              handleMouseMove(e);
-              handleStageMouseMove(e);
+        const stage = e.target.getStage();
+        if (!stage) return;
 
-              if (tool === 'BRUSH') {
-                if (isEraser) {
-                  if (e.evt.buttons & 1) {
-                    handleEraserDown(e);
-                  }
-                } else {
-                  handleBrushMouseMove(e);
-                }
-              }
-            }}
-            onMouseUp={(e) => {
-              handleStageMouseUp(e);
+        if (tool === 'ARROW') {
+          const pos = getPointerPositionLogical(stage);
+          if (!pos) return;
+          setFreeArrowStart(pos);
+          setFreeArrowEnd(pos);
+          return;
+        }
 
-              if (tool === 'BRUSH' && !isEraser) {
-                handleBrushMouseUp(e);
-              }
-            }}
-          onMouseMove={(e) => {
-             handleMouseMove(e);
-            handleStageMouseMove(e);
+        if (tool === 'BRUSH') {
+          if (isEraser) {
+            handleEraserDown(e);
+          } else {
+            handleBrushMouseDown(e);
+          }
+        } else {
+          handleCreateElementOnClick(e);
+        }
+      }}
+      onMouseMove={(e) => {
+        handleMouseMove(e);
+        handleStageMouseMove(e);
+
+        if (tool === 'ARROW' && freeArrowStart) {
+          const stage = e.target.getStage();
+          if (!stage) return;
+          const pos = getPointerPositionLogical(stage);
+          if (!pos) return;
+          setFreeArrowEnd(pos);
+          return;
+        }
+
+        if (tool === 'BRUSH') {
+          if (isEraser) {
+            if (e.evt.buttons & 1) {
+              handleEraserDown(e);
+            }
+          } else {
             handleBrushMouseMove(e);
-          }}
-          onMouseUp={(e) => {
-            handleStageMouseUp(e);
-            handleBrushMouseUp(e);
-          }}
-          onWheel={handleStageWheel}
-      >
+          }
+        }
+      }}
+      onMouseUp={async (e) => {
+        handleStageMouseUp(e);
+
+        if (tool === 'ARROW' && freeArrowStart && freeArrowEnd) {
+          const { x: x1, y: y1 } = freeArrowStart;
+          const { x: x2, y: y2 } = freeArrowEnd;
+          setFreeArrowStart(null);
+          setFreeArrowEnd(null);
+
+          if (Math.hypot(x2 - x1, y2 - y1) < 5) {
+            return;
+          }
+
+          try {
+            const el = await createElement(boardUuid, {
+              type: 'ARROW',
+              x: 0,
+              y: 0,
+              width: 1,
+              height: 1,
+              rotation: 0,
+              properties: {
+                x1,
+                y1,
+                x2,
+                y2,
+                color: '#000000',
+                strokeWidth: 2,
+              },
+            });
+            setSelectedIds([el.id]);
+            setTool('SELECT');
+          } catch (err) {
+            console.error('Failed to create free arrow', err);
+          }
+          return;
+        }
+
+        if (tool === 'BRUSH' && !isEraser) {
+          handleBrushMouseUp(e);
+        }
+      }}
+      onWheel={handleStageWheel}
+    >
 
         <Layer listening={false}>
           {Object.entries(remoteCursors).map(([id, pos]) => (
@@ -984,7 +1106,8 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
               }
 
               if (el.type === 'ARROW') {
-                const canEdit = tool === 'ARROW' && !isLockedByOther;
+                const canEdit = tool === 'SELECT' && !isLockedByOther;
+                const canDragArrow = tool === 'SELECT' && !isLockedByOther;
                 return (
                   <ArrowElement
                     key={el.id}
@@ -995,6 +1118,7 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
                     onContextMenu={(evt) => handleElementContextMenu(el, evt)}
                     onChange={handleElementChange}
                     canEdit={canEdit}
+                    canDrag={canDragArrow}
                   />
                 );
               }
@@ -1071,30 +1195,88 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
         </div>
       )}
 
-        {textEditor && (
-          <textarea
-            ref={textAreaRef}
-            value={textEditor.value}
-            onChange={handleTextEditorChange}
-            onBlur={commitTextEditor}
-            style={{
-              position: 'absolute',
-              top: textEditor.y,
-              left: textEditor.x,
-              width: textEditor.width,
-              height: textEditor.height,
-              fontSize: 16 * stageScale,
-              fontFamily: 'inherit',
-              padding: '4px 6px',
-              border: '1px solid #00a1ff',
-              outline: 'none',
-              resize: 'none',
-              background: 'rgba(255,255,255,0.9)',
-              boxSizing: 'border-box',
-              zIndex: 30,
-            }}
-          />
-        )}
+     {textEditor && (
+       <>
+         <div
+           style={{
+             position: 'absolute',
+             top: textEditor.y - 36,
+             left: textEditor.x,
+             display: 'flex',
+             gap: 8,
+             padding: '4px 6px',
+             background: 'white',
+             border: '1px solid #ccc',
+             borderRadius: 4,
+             boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
+             zIndex: 31,
+           }}
+           onMouseDown={(e) => e.stopPropagation()}
+         >
+           <select
+             value={textEditor.fontFamily}
+             onChange={(e) =>
+               setTextEditor((prev) =>
+                 prev ? { ...prev, fontFamily: e.target.value } : prev,
+               )
+             }
+           >
+             <option value="Arial">Arial</option>
+             <option value="Inter">Inter</option>
+             <option value="Courier New">Courier New</option>
+             <option value="Georgia">Georgia</option>
+           </select>
+
+           <input
+             type="number"
+             min={8}
+             max={96}
+             value={textEditor.fontSize}
+             style={{ width: 60 }}
+             onChange={(e) =>
+               setTextEditor((prev) =>
+                 prev
+                   ? { ...prev, fontSize: Number(e.target.value) || prev.fontSize }
+                   : prev,
+               )
+             }
+           />
+
+           <input
+             type="color"
+             value={textEditor.color}
+             onChange={(e) =>
+               setTextEditor((prev) =>
+                 prev ? { ...prev, color: e.target.value } : prev,
+               )
+             }
+           />
+         </div>
+
+         <textarea
+           ref={textAreaRef}
+           value={textEditor.value}
+           onChange={handleTextEditorChange}
+           style={{
+             position: 'absolute',
+             top: textEditor.y,
+             left: textEditor.x,
+             width: textEditor.width,
+             height: textEditor.height,
+             fontSize: textEditor.fontSize * stageScale,
+             fontFamily: textEditor.fontFamily,
+             color: textEditor.color,
+             padding: '4px 6px',
+             border: '1px solid #00a1ff',
+             outline: 'none',
+             resize: 'none',
+             background: 'rgba(255,255,255,0.9)',
+             boxSizing: 'border-box',
+             zIndex: 30,
+           }}
+         />
+       </>
+     )}
 
         {shapeColorPicker && (() => {
           const el = elements.find(e => e.id === shapeColorPicker.elementId);
