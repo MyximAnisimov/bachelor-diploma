@@ -18,6 +18,7 @@ interface Props {
   elements: BoardElementDto[];
   onElementsChange: Dispatch<SetStateAction<BoardElementDto[]>>;
   tool: Tool;
+  shapeKind: ShapeKind;
   brushSize: number;
   isEraser: boolean;
   clientId: string;
@@ -70,6 +71,7 @@ export const BoardCanvas: React.FC<Props> = ({
   remoteCursors,
   selectedIds,
   setSelectedIds,
+  shapeKind,
 }) => {
   const [selectionRect, setSelectionRect] = useState<SelectionRectState>({
     visible: false,
@@ -97,6 +99,13 @@ export const BoardCanvas: React.FC<Props> = ({
   const nodeRefs = useRef<Record<number, any>>({});
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [brushPoints, setBrushPoints] = useState<number[] | null>(null)
+const [shapeColorPicker, setShapeColorPicker] = useState<{
+  elementId: number;
+  mode: 'fill' | 'stroke';
+} | null>(null);
+
+const [brushColor, setBrushColor] = useState('#000000');
+
 
   const width = window.innerWidth;
   const height = window.innerHeight - 60;
@@ -129,6 +138,14 @@ export const BoardCanvas: React.FC<Props> = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedIds]);
+
+  useEffect(() => {
+    if (!shapeColorPicker) return;
+
+    if (!selectedIds.includes(shapeColorPicker.elementId)) {
+      setShapeColorPicker(null);
+    }
+  }, [selectedIds, shapeColorPicker]);
 
 const prevSelectedRef = useRef<number[]>([]);
 
@@ -174,6 +191,7 @@ useEffect(() => {
   }, [tool]);
 
     const handleElementChange = async (updated: BoardElementDto) => {
+         console.log('LOCAL CHANGE', updated);
       onElementsChange((prev) =>
         prev.map((el) => (el.id === updated.id ? updated : el)),
       );
@@ -339,7 +357,7 @@ const handleBrushMouseUp = async (e: KonvaEventObject<MouseEvent>) => {
     return;
   }
 
-  const strokeColor = isEraser ? '#f5f5f5' : '#000000';
+  const strokeColor = isEraser ? '#f5f5f5' : brushColor;
   const points = brushPoints;
   setBrushPoints(null);
 
@@ -369,8 +387,6 @@ const handleBrushMouseUp = async (e: KonvaEventObject<MouseEvent>) => {
   }
 
   try {
-    const strokeColor = isEraser ? '#f5f5f5' : '#000000';
-
     const el = await createElement(boardUuid, {
       type: 'BRUSH',
       x: minX,
@@ -385,8 +401,6 @@ const handleBrushMouseUp = async (e: KonvaEventObject<MouseEvent>) => {
         eraser: isEraser,
       },
     });
-
-    onElementsChange((prev) => [...prev, el]);
   } catch (err) {
     console.error('Failed to create brush element', err);
   }
@@ -460,7 +474,6 @@ const createArrowBetweenStickers = async (
       },
     });
 
-    onElementsChange((prev) => [...prev, el]);
     setSelectedIds([el.id]);
   } catch (err) {
     console.error('Failed to create arrow element', err);
@@ -597,8 +610,6 @@ const handleElementClick = (
         });
         created.push(res);
       }
-
-      onElementsChange((prev) => [...prev, ...created]);
       setSelectedIds(created.map((el) => el.id));
     } catch (e) {
       console.error('Failed to duplicate elements', e);
@@ -607,18 +618,73 @@ const handleElementClick = (
     }
   };
 
+const openShapeColorMenu = (elementId: number, mode: 'fill' | 'stroke') => {
+  console.log('openShapeColorMenu', elementId, mode);
+  setShapeColorPicker({ elementId, mode });
+};
+
+const handleDeleteElement = async (id: number) => {
+  const el = elements.find(e => e.id === id);
+  if (!el) return;
+
+  onElementsChange(prev => prev.filter(e => e.id !== id));
+
+  try {
+    await deleteElement(boardUuid, id);
+  } catch (err) {
+    console.error('Failed to delete element', err);
+  }
+};
+
+const handleEraserDown = (e: KonvaEventObject<MouseEvent>) => {
+  const stage = e.target.getStage();
+  if (!stage) return;
+
+  const pointerPos = stage.getPointerPosition();
+  if (!pointerPos) return;
+
+  const logicalX = (pointerPos.x - stagePos.x) / stageScale;
+  const logicalY = (pointerPos.y - stagePos.y) / stageScale;
+
+  const eraserRadius = brushSize;
+
+  const idsToDelete: number[] = [];
+
+  for (const el of elements) {
+    if (el.type !== 'BRUSH') continue;
+    const props = (el.properties || {}) as any;
+    const points: number[] = props.points || [];
+
+    for (let i = 0; i < points.length; i += 2) {
+      const px = el.x + points[i];
+      const py = el.y + points[i + 1];
+      const dx = px - logicalX;
+      const dy = py - logicalY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist <= eraserRadius) {
+        idsToDelete.push(el.id);
+        break;
+      }
+    }
+  }
+
+  if (idsToDelete.length === 0) return;
+
+  for (const id of idsToDelete) {
+    handleDeleteElement(id);
+  }
+};
+
   const handleCreateElementOnClick = async (e: KonvaEventObject<MouseEvent>) => {
-    if (tool !== 'TEXT' && tool !== 'STICKER') return;
-    if (e.evt.button !== 0) return;
-
-    const stage = e.target.getStage();
-    if (!stage) return;
-
-    const isEmpty = e.target === stage;
-    if (!isEmpty) return;
-
-    const pos = getPointerPositionLogical(stage);
-    if (!pos) return;
+      console.log('handleCreateElementOnClick', tool);
+  if (tool !== 'TEXT' && tool !== 'STICKER' && tool !== 'SHAPE') return;
+  if (e.evt.button !== 0) return;
+  const stage = e.target.getStage();
+  if (!stage) return;
+  const isEmpty = e.target === stage;
+  if (!isEmpty) return;
+  const pos = getPointerPositionLogical(stage);
+  if (!pos) return;
 
     try {
       if (tool === 'TEXT') {
@@ -639,7 +705,6 @@ const handleElementClick = (
           },
         });
 
-        onElementsChange(prev => [...prev, el]);
         setSelectedIds([el.id]);
         openTextEditorForElement(el);
       }
@@ -660,9 +725,29 @@ const handleElementClick = (
           },
         });
 
-        onElementsChange(prev => [...prev, el]);
         setSelectedIds([el.id]);
       }
+
+    if (tool === 'SHAPE') {
+        console.log('CREATE SHAPE at', pos, 'shapeKind=', shapeKind);
+      const width = 200;
+      const height = 120;
+        const el = await createElement(boardUuid, {
+          type: 'SHAPE',
+          x: pos.x,
+          y: pos.y,
+          width: 200,
+          height: 120,
+          rotation: 0,
+          properties: {
+            shapeKind,
+            fill: '#FFFFFF',
+            stroke: '#000000',
+          },
+        });
+
+      setSelectedIds([el.id]);
+    }
     } catch (err) {
       console.error('Failed to create element', err);
     }
@@ -726,11 +811,40 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
           scaleY={stageScale}
           draggable={tool === 'HAND'}
           onDragEnd={handleStageDragEnd}
-          onMouseDown={(e) => {
-            handleStageMouseDown(e);
-            handleBrushMouseDown(e);
-            handleCreateElementOnClick(e);
-          }}
+            onMouseDown={(e) => {
+              handleStageMouseDown(e);
+
+              if (tool === 'BRUSH') {
+                if (isEraser) {
+                  handleEraserDown(e);
+                } else {
+                  handleBrushMouseDown(e);
+                }
+              } else {
+                handleCreateElementOnClick(e);
+              }
+            }}
+            onMouseMove={(e) => {
+              handleMouseMove(e);
+              handleStageMouseMove(e);
+
+              if (tool === 'BRUSH') {
+                if (isEraser) {
+                  if (e.evt.buttons & 1) {
+                    handleEraserDown(e);
+                  }
+                } else {
+                  handleBrushMouseMove(e);
+                }
+              }
+            }}
+            onMouseUp={(e) => {
+              handleStageMouseUp(e);
+
+              if (tool === 'BRUSH' && !isEraser) {
+                handleBrushMouseUp(e);
+              }
+            }}
           onMouseMove={(e) => {
              handleMouseMove(e);
             handleStageMouseMove(e);
@@ -755,10 +869,10 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
             {sortedElements.map((el) => {
               const isLockedByOther =
                 locks[el.id] !== undefined && locks[el.id] !== clientId;
-                 console.log('ELEMENT', el.id, 'lockOwner:', locks[el.id], 'isLockedByOther:', isLockedByOther);
 
               if (el.type === 'SHAPE') {
                 return (
+                  <React.Fragment key={el.id}>
                   <ShapeElement
                     key={el.id}
                     element={el}
@@ -771,6 +885,43 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
                       nodeRefs.current[el.id] = node;
                     }}
                   />
+                    {selectedIds.includes(el.id) && (
+                      <Group
+                        x={el.x + el.width / 2}
+                        y={el.y - 30}
+                        listening={true}
+                      >
+
+                        <Rect
+                          x={-40}
+                          y={-15}
+                          width={80}
+                          height={30}
+                          fill="white"
+                          cornerRadius={4}
+                          shadowBlur={2}
+                        />
+
+                        <Circle
+                          x={-20}
+                          y={0}
+                          radius={8}
+                          fill={(el.properties as any)?.fill ?? '#FFFFFF'}
+                          stroke="#000"
+                          onClick={() => openShapeColorMenu(el.id, 'fill')}
+                        />
+
+                        <Circle
+                          x={20}
+                          y={0}
+                          radius={8}
+                          fill={(el.properties as any)?.stroke ?? '#000000'}
+                          stroke="#000"
+                          onClick={() => openShapeColorMenu(el.id, 'stroke')}
+                        />
+                      </Group>
+                    )}
+                  </React.Fragment>
                 );
               }
 
@@ -877,18 +1028,6 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
             />
           )}
         </Layer>
-
-        {tool === 'BRUSH' && brushPoints && (
-          <Layer>
-            <Line
-              points={brushPoints}
-              stroke={isEraser ? '#f5f5f5' : '#000000'}
-              strokeWidth={brushSize}
-              lineCap="round"
-              lineJoin="round"
-            />
-          </Layer>
-        )}
       </Stage>
 
       {contextMenu.visible && selectedIds.length > 0 && (
@@ -956,6 +1095,49 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
             }}
           />
         )}
+
+        {shapeColorPicker && (() => {
+          const el = elements.find(e => e.id === shapeColorPicker.elementId);
+          if (!el) return null;
+
+          const logicalX = el.x + el.width / 2;
+          const logicalY = el.y - 10;
+
+          const screenX = stagePos.x + logicalX * stageScale;
+          const screenY = stagePos.y + logicalY * stageScale;
+
+          const currentColor =
+            (el.properties as any)?.[shapeColorPicker.mode] ??
+            (shapeColorPicker.mode === 'fill' ? '#FFFFFF' : '#000000');
+
+          return (
+            <input
+              type="color"
+              value={currentColor}
+              onChange={(e) => {
+                const color = e.target.value;
+                const el2 = elements.find(x => x.id === shapeColorPicker.elementId);
+                if (!el2) return;
+                const updated: BoardElementDto = {
+                  ...el2,
+                  properties: {
+                    ...(el2.properties || {}),
+                    [shapeColorPicker.mode]: color,
+                  },
+                };
+                handleElementChange(updated);
+              }}
+              onBlur={() => {
+              }}
+              style={{
+                position: 'absolute',
+                left: screenX - 10,
+                top: screenY - 10,
+                zIndex: 40,
+              }}
+            />
+          );
+        })()}
     </div>
   );
 };

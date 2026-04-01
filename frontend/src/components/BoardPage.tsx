@@ -9,25 +9,41 @@ import { BoardCanvas } from './BoardCanvas';
 
 type Tool = 'SELECT' | 'HAND' | 'BRUSH' | 'TEXT' | 'STICKER' | 'ARROW';
 
+type ShapeKind =
+     | 'RECT'
+     | 'ROUND_RECT'
+     | 'DIAMOND'
+     | 'TRAPEZOID'
+     | 'TRIANGLE'
+     | 'CYLINDER';
+
 export const BoardPage: React.FC = () => {
+
   const { boardUuid } = useParams<{ boardUuid: string }>();
   const [board, setBoard] = useState<BoardDto | null>(null);
   const [elements, setElements] = useState<BoardElementDto[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [tool, setTool] = useState<Tool>('SELECT');
+  const [shapeKind, setShapeKind] = useState<ShapeKind>('RECT');
+  const [shapeMenuOpen, setShapeMenuOpen] = useState(false);
   const [brushSize, setBrushSize] = useState(4);
   const [isEraser, setIsEraser] = useState(false);
+  const [brushColor, setBrushColor] = useState('#000000');
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
 
   useEffect(() => {
+      console.log('BoardPage mount, boardUuid =', boardUuid);
     if (!boardUuid) return;
     (async () => {
       try {
+          console.log('Fetching board and elements for', boardUuid);
         const [b, els] = await Promise.all([
           getBoard(boardUuid),
           getBoardElements(boardUuid),
         ]);
+         console.log('Fetched board', b);
+          console.log('Fetched elements', els.length);
         setBoard(b);
         setElements(els);
       } finally {
@@ -104,6 +120,7 @@ useBoardWs({
   },
 
   onElementMessage: (msg) => {
+      console.log('WS ELEMENT MSG', msg);
     setElements((prev) => {
       if (msg.action === 'DELETE') {
         return prev.filter((el) => el.id !== msg.element.id);
@@ -119,7 +136,7 @@ useBoardWs({
   },
 });
 
-
+console.log('RENDER BoardPage', { loading, board });
   if (loading || !board) return <div>Загрузка...</div>;
 
   return (
@@ -158,14 +175,31 @@ useBoardWs({
         </button>
 
         <button
-          onClick={() => setTool('BRUSH')}
+          onClick={() => {
+            setTool('BRUSH');
+            setIsEraser(false);
+          }}
           style={{
             padding: '4px 8px',
-            background: tool === 'BRUSH' ? '#1976d2' : '#eee',
-            color: tool === 'BRUSH' ? '#fff' : '#000',
+            background: tool === 'BRUSH' && !isEraser ? '#1976d2' : '#eee',
+            color: tool === 'BRUSH' && !isEraser ? '#fff' : '#000',
           }}
         >
           Кисть
+        </button>
+
+        <button
+          onClick={() => {
+            setTool('BRUSH');
+            setIsEraser(true);
+          }}
+          style={{
+            padding: '4px 8px',
+            background: tool === 'BRUSH' && isEraser ? '#1976d2' : '#eee',
+            color: tool === 'BRUSH' && isEraser ? '#fff' : '#000',
+          }}
+        >
+          Ластик
         </button>
 
         {tool === 'BRUSH' && (
@@ -183,32 +217,118 @@ useBoardWs({
           >
             <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               Размер кисти
-                  <input
-                    type="range"
-                    min={1}
-                    max={40}
-                    value={brushSize}
-                    onChange={(e) => setBrushSize(Number(e.target.value))}
-                  />
+              <input
+                type="range"
+                min={1}
+                max={40}
+                value={brushSize}
+                onChange={(e) => setBrushSize(Number(e.target.value))}
+              />
               <span>{brushSize}</span>
             </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <input
-                type="checkbox"
-                checked={isEraser}
-                onChange={(e) => setIsEraser(e.target.checked)}
-              />
-              Ластик
-            </label>
+
+            {!isEraser && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                Цвет
+                <input
+                  type="color"
+                  value={brushColor}
+                  onChange={(e) => setBrushColor(e.target.value)}
+                />
+              </label>
+            )}
           </div>
         )}
 
-        <button
-          onClick={handleAddRect}
-          style={{ marginLeft: 'auto', padding: '4px 8px' }}
-        >
-          Добавить прямоугольник
-        </button>
+        <div style={{ position: 'relative', display: 'inline-block' }}>
+          <button
+            onClick={() => {
+              setTool('SHAPE' as any);
+              setShapeMenuOpen((v) => !v);
+            }}
+          >
+            Фигура
+          </button>
+
+          {shapeMenuOpen && (
+            <div
+              style={{
+                position: 'absolute',
+                top: '100%',
+                left: 0,
+                background: '#fff',
+                border: '1px solid #ccc',
+                boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
+                zIndex: 50,
+                minWidth: 160,
+              }}
+            >
+              <button
+                style={{ display: 'block', width: '100%', textAlign: 'left' }}
+                onClick={() => {
+                  setShapeKind('RECT');
+                  setShapeMenuOpen(false);
+                }}
+              >
+                Прямоугольник
+              </button>
+              <button
+                style={{ display: 'block', width: '100%', textAlign: 'left' }}
+                onClick={() => {
+                  setShapeKind('CIRCLE');
+                  setShapeMenuOpen(false);
+                }}
+              >
+                Круг
+              </button>
+              <button
+                style={{ display: 'block', width: '100%', textAlign: 'left' }}
+                onClick={() => {
+                  setShapeKind('OVAL');
+                  setShapeMenuOpen(false);
+                }}
+              >
+                Овал
+              </button>
+              <button
+                style={{ display: 'block', width: '100%', textAlign: 'left' }}
+                onClick={() => {
+                  setShapeKind('DIAMOND');
+                  setShapeMenuOpen(false);
+                }}
+              >
+                Ромб
+              </button>
+              <button
+                style={{ display: 'block', width: '100%', textAlign: 'left' }}
+                onClick={() => {
+                  setShapeKind('TRAPEZOID');
+                  setShapeMenuOpen(false);
+                }}
+              >
+                Трапеция
+              </button>
+              <button
+                style={{ display: 'block', width: '100%', textAlign: 'left' }}
+                onClick={() => {
+                  setShapeKind('TRIANGLE');
+                  setShapeMenuOpen(false);
+                }}
+              >
+                Треугольник
+              </button>
+              <button
+                style={{ display: 'block', width: '100%', textAlign: 'left' }}
+                onClick={() => {
+                  setShapeKind('CYLINDER');
+                  setShapeMenuOpen(false);
+                }}
+              >
+                Цилиндр
+              </button>
+            </div>
+          )}
+        </div>
 
         <button
           onClick={() => setTool('TEXT')}
@@ -252,11 +372,13 @@ useBoardWs({
           tool={tool}
           locks={locks}
           clientId={clientId}
+          brushColor={brushColor}
           brushSize={brushSize}
           isEraser={isEraser}
           remoteCursors={remoteCursors}
           selectedIds={selectedIds}
           setSelectedIds={setSelectedIds}
+          shapeKind={shapeKind}
         />
       </div>
     </div>
