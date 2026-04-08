@@ -32,6 +32,9 @@ public class User {
 
     private String email;
 
+    @Column(name = "password_hash", nullable = false)
+    private String passwordHash;
+
     private String avatarUrl;
 
     @Column(nullable = false, updatable = false)

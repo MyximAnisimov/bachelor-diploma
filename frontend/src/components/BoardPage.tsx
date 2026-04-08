@@ -6,8 +6,9 @@ import { useBoardWs } from '../hooks/useBoardsWs';
 import { clientId } from '../api/clientId';
 import type { BoardDto, BoardElementDto } from '../api/types';
 import { BoardCanvas } from './BoardCanvas';
+import { uploadFile } from '../api/files';
 
-type Tool = 'SELECT' | 'HAND' | 'BRUSH' | 'TEXT' | 'STICKER' | 'ARROW';
+type Tool = 'SELECT' | 'HAND' | 'BRUSH' | 'TEXT' | 'STICKER' | 'ARROW' | 'MEDIA';
 
 type ShapeKind =
      | 'RECT'
@@ -31,6 +32,7 @@ export const BoardPage: React.FC = () => {
   const [isEraser, setIsEraser] = useState(false);
   const [brushColor, setBrushColor] = useState('#000000');
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [isMediaDialogOpen, setIsMediaDialogOpen] = useState(false);
 
   useEffect(() => {
       console.log('BoardPage mount, boardUuid =', boardUuid);
@@ -69,6 +71,42 @@ export const BoardPage: React.FC = () => {
     });
     setElements(prev => [...prev, el]);
   };
+
+const handleUploadMedia = async (file: File) => {
+  try {
+    if (!boardUuid || !board) return;
+
+    const data = await uploadFile(file);
+
+    let width = data.width ?? 320;
+    let height = data.height ?? 240;
+    const maxW = 400;
+    const maxH = 400;
+    const scale = Math.min(1, maxW / width, maxH / height);
+    width *= scale;
+    height *= scale;
+
+    const el = await createElement(boardUuid, {
+      type: 'MEDIA',
+      x: 100,
+      y: 100,
+      width,
+      height,
+      rotation: 0,
+      properties: {
+        mediaId: data.id,
+        url: data.url,
+        mediaType: data.contentType?.startsWith('video/')
+          ? 'VIDEO'
+          : 'IMAGE',
+      },
+    });
+
+    setElements((prev) => [...prev, el]);
+  } catch (err) {
+    console.error('Failed to upload media', err);
+  }
+};
 
   const [locks, setLocks] = useState<Record<number, string>>({});
   const [remoteCursors, setRemoteCursors] = useState<Record<string, { x: number; y: number }>>({});
@@ -362,6 +400,16 @@ console.log('RENDER BoardPage', { loading, board });
         >
           Стрелка
         </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setTool('MEDIA');
+            setIsMediaDialogOpen(true);
+          }}
+        >
+          Медиа
+        </button>
       </header>
 
       <div style={{ flex: 1 }}>
@@ -382,6 +430,82 @@ console.log('RENDER BoardPage', { loading, board });
           setTool={setTool}
         />
       </div>
+
+{isMediaDialogOpen && (
+  <div
+    style={{
+      position: 'fixed',
+      inset: 0,
+      background: 'rgba(0,0,0,0.3)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 100,
+    }}
+    onClick={() => {
+      setIsMediaDialogOpen(false);
+      setTool('SELECT');
+    }}
+  >
+    <div
+      style={{
+        background: '#fff',
+        padding: 24,
+        borderRadius: 8,
+        width: 420,
+        boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <h3>Загрузка медиафайла</h3>
+      <p style={{ fontSize: 14, color: '#666' }}>
+        Перетащите файл (изображение или видео) в область ниже
+        или выберите его на вашем устройстве.
+      </p>
+
+      <div
+        style={{
+          border: '2px dashed #ccc',
+          borderRadius: 8,
+          padding: 32,
+          textAlign: 'center',
+          marginTop: 16,
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+        }}
+        onDrop={async (e) => {
+          e.preventDefault();
+          const file = e.dataTransfer.files?.[0];
+          if (!file) return;
+          await handleUploadMedia(file);
+          setIsMediaDialogOpen(false);
+          setTool('SELECT');
+        }}
+      >
+        Перетащите файл сюда
+      </div>
+
+      <div style={{ marginTop: 16, textAlign: 'center' }}>
+        <label style={{ cursor: 'pointer', color: '#1976d2' }}>
+          выбрать медиафайл
+          <input
+            type="file"
+            accept="image/*,video/*"
+            style={{ display: 'none' }}
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              await handleUploadMedia(file);
+              setIsMediaDialogOpen(false);
+              setTool('SELECT');
+            }}
+          />
+        </label>
+      </div>
+    </div>
+  </div>
+)}
     </div>
   );
 };

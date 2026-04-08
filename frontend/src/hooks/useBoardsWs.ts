@@ -23,20 +23,33 @@ export function useBoardWs({
   boardUuid,
   onLockMessage,
   onCursorMessage,
-  onElementMessage
+  onElementMessage,
 }: UseBoardWsParams) {
   useEffect(() => {
+    if (!boardUuid) {
+      return;
+    }
+
+    const token = localStorage.getItem('token');
+
     const client = new Client({
       webSocketFactory: () => new SockJS('http://localhost:8080/ws'),
       reconnectDelay: 5000,
-        debug: (str) => {
-          console.log('STOMP:', str);
-        },
+      debug: (str) => {
+        console.log('STOMP:', str);
+      },
+      connectHeaders: token
+        ? {
+            Authorization: `Bearer ${token}`,
+          }
+        : {},
     });
 
     stompClient = client;
 
     client.onConnect = () => {
+      console.log('STOMP connected');
+
       pendingLocks.forEach((msg) => {
         client.publish({
           destination: '/app/board.lock',
@@ -44,15 +57,14 @@ export function useBoardWs({
         });
       });
       pendingLocks.length = 0;
+
       client.subscribe(
         `/topic/boards/${boardUuid}/locks`,
         (message: IMessage) => {
           const body = JSON.parse(message.body);
-          console.log('WS RAW LOCK MESSAGE', body);
           onLockMessage(body);
         },
       );
-
       client.subscribe(
         `/topic/boards/${boardUuid}/cursors`,
         (message: IMessage) => {
@@ -60,7 +72,6 @@ export function useBoardWs({
           onCursorMessage(body);
         },
       );
-
       client.subscribe(
         `/topic/boards/${boardUuid}/elements`,
         (message: IMessage) => {
@@ -68,6 +79,14 @@ export function useBoardWs({
           onElementMessage(body);
         },
       );
+    };
+
+    client.onStompError = (frame) => {
+      console.error('STOMP error', frame.headers['message'], frame.body);
+    };
+
+    client.onWebSocketError = (event) => {
+      console.error('WS error', event);
     };
 
     client.activate();
@@ -86,19 +105,10 @@ export function sendLock(
   elementIds: number[],
   action: 'LOCK' | 'UNLOCK',
 ) {
- if (!stompClient || !stompClient.connected) {
-    console.warn('sendLock: stompClient not connected, queueing lock');
+  if (!stompClient || !stompClient.connected) {
     pendingLocks.push({ boardUuid, elementIds, action, clientId });
     return;
   }
-
-  console.log('sendLock PUBLISH', {
-    boardUuid,
-    elementIds,
-    clientId,
-    action,
-  });
-
   stompClient.publish({
     destination: '/app/board.lock',
     body: JSON.stringify({
@@ -111,11 +121,9 @@ export function sendLock(
 }
 
 export function sendCursor(boardUuid: string, x: number, y: number) {
-
   if (!stompClient || !stompClient.connected) {
     return;
   }
-
   stompClient.publish({
     destination: '/app/board.cursor',
     body: JSON.stringify({

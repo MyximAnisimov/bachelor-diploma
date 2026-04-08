@@ -10,6 +10,7 @@ import { BrushElement } from '../elements/BrushElement';
 import { TextElement } from '../elements/TextElement';
 import { StickerElement } from '../elements/StickerElement';
 import { ArrowElement } from '../elements/ArrowElement';
+import { MediaElement } from '../elements/MediaElement';
 
 type Tool = 'SELECT' | 'HAND' | 'BRUSH' | 'TEXT' | 'STICKER' | 'ARROW';
 
@@ -131,17 +132,19 @@ const [freeArrowEnd, setFreeArrowEnd] = useState<{ x: number; y: number } | null
 
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  useEffect(() => {
-      const tr = transformerRef.current;
-      if (!tr) return;
+useEffect(() => {
+  const transformer = transformerRef.current;
+  if (!transformer) return;
 
-      const nodes = selectedIds
-        .map((id) => nodeRefs.current[id])
-        .filter((node) => node);
+  const nodes: Konva.Node[] = [];
+  selectedIds.forEach((id) => {
+    const node = nodeRefs.current[id];
+    if (node) nodes.push(node);
+  });
 
-      tr.nodes(nodes);
-      tr.getLayer()?.batchDraw();
-    }, [selectedIds, elements]);
+  transformer.nodes(nodes);
+  transformer.getLayer()?.batchDraw();
+}, [selectedIds, elements]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -446,6 +449,7 @@ const handleBrushMouseUp = async (e: KonvaEventObject<MouseEvent>) => {
         eraser: isEraser,
       },
     });
+// onElementsChange((prev) => [...prev, el]);
   } catch (err) {
     console.error('Failed to create brush element', err);
   }
@@ -567,6 +571,7 @@ const handleElementClick = (
   el: BoardElementDto,
   evt: KonvaEventObject<MouseEvent>,
 ) => {
+    console.log('handleElementClick called for', el.id, el.type);
   evt.cancelBubble = true;
 
   if (tool === 'ARROW' && el.type === 'STICKER') {
@@ -613,13 +618,19 @@ const handleElementClick = (
 
   if (tool !== 'SELECT') return;
 
+  console.log('Before selection:', selectedIds);
+
   const isSelected = selectedIds.includes(el.id);
 
   if (evt.evt.shiftKey || evt.evt.ctrlKey || evt.evt.metaKey) {
-    setSelectedIds((prev) =>
-      isSelected ? prev.filter((id) => id !== el.id) : [...prev, el.id],
-    );
+  setSelectedIds((prev) => {
+    const next = isSelected ? prev.filter((id) => id !== el.id) : [...prev, el.id];
+    console.log('After selection (multi):', next);
+    return next;
+  });
   } else {
+        const next = [el.id];
+        console.log('After selection (single):', next);
     setSelectedIds([el.id]);
   }
 };
@@ -781,6 +792,7 @@ const handleEraserDown = (e: KonvaEventObject<MouseEvent>) => {
 
         setTool('SELECT');
 
+//     onElementsChange((prev) => [...prev, el]);
         setSelectedIds([el.id]);
         openTextEditorForElement(el);
       }
@@ -800,7 +812,7 @@ const handleEraserDown = (e: KonvaEventObject<MouseEvent>) => {
             color: '#fff59d',
           },
         });
-
+// onElementsChange((prev) => [...prev, el]);
         setSelectedIds([el.id]);
       }
 
@@ -821,7 +833,7 @@ const handleEraserDown = (e: KonvaEventObject<MouseEvent>) => {
             stroke: '#000000',
           },
         });
-
+// onElementsChange((prev) => [...prev, el]);
       setSelectedIds([el.id]);
     }
     } catch (err) {
@@ -1046,6 +1058,31 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
                   </React.Fragment>
                 );
               }
+
+                if (el.type === 'MEDIA') {
+                  const canEdit = tool === 'SELECT' && !isLockedByOther;
+
+                  return (
+                    <MediaElement
+                      key={el.id}
+                      element={el}
+                      isSelected={selectedIds.includes(el.id)}
+                      onClick={(evt) => handleElementClick(el, evt)}
+                      onContextMenu={(evt) => handleElementContextMenu(el, evt)}
+                      onChange={handleElementChange}
+                      canEdit={canEdit}
+                            registerNode={(node) => {
+                              nodeRefs.current[el.id] = node;
+                            }}
+                              onLock={(id) => {
+                                sendLock(boardUuid, [id], 'LOCK');
+                              }}
+                              onUnlock={(id) => {
+                                sendLock(boardUuid, [id], 'UNLOCK');
+                              }}
+                    />
+                  );
+                }
 
               if (el.type === 'BRUSH') {
                 return (

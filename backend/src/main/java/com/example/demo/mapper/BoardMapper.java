@@ -3,6 +3,7 @@ package com.example.demo.mapper;
 import com.example.demo.dto.BoardDto;
 import com.example.demo.model.Board;
 
+
 public class BoardMapper {
     public BoardDto toDto(Board entity) {
         BoardDto dto = new BoardDto();

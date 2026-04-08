@@ -19,16 +19,20 @@ import com.example.demo.model.Board;
 import com.example.demo.model.BoardElement;
 import com.example.demo.model.BoardHistoryEvent;
 import com.example.demo.model.ElementGroup;
+import com.example.demo.model.User;
 import com.example.demo.repository.BoardElementRepository;
 import com.example.demo.repository.BoardHistoryEventRepository;
 import com.example.demo.repository.BoardRepository;
 import com.example.demo.repository.ElementGroupRepository;
-import com.example.demo.security.AuthUser;
+import com.example.demo.repository.UserRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.ValidationException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -40,6 +44,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class BoardElementServiceImpl implements BoardElementService {
@@ -53,7 +58,8 @@ public class BoardElementServiceImpl implements BoardElementService {
 
     private final BoardElementMapper elementMapper;
     private final ObjectMapper objectMapper;
-//    private final AuthUser authUser;
+    private final BoardService boardService;
+    private final UserRepository userRepository;
 
     private Board getBoardOrThrow(UUID boardUuid) {
         return boardRepository.findByUuid(boardUuid)
@@ -95,8 +101,6 @@ public class BoardElementServiceImpl implements BoardElementService {
         event.setAfterStateJson(toJsonSafe(afterState));
         event.setCreatedAt(Instant.now());
 
-//        authUser.getCurrentUser().ifPresent(event::setActor);
-
         historyRepository.save(event);
     }
 
@@ -114,15 +118,39 @@ public class BoardElementServiceImpl implements BoardElementService {
                 .collect(Collectors.toList());
     }
 
+    private User getCurrentUserOrNull() {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getPrincipal() == null ||
+                "anonymousUser".equals(auth.getPrincipal())) {
+            return null;
+        }
+        Object principal = auth.getPrincipal();
+        if (principal instanceof User u) {
+            return u;
+        }
+        if (principal instanceof UserDetails ud) {
+            return userRepository.findByEmail(ud.getUsername()).orElse(null);
+        }
+        return null;
+    }
+
     @Override
     @Transactional
     public BoardElementDto createElement(UUID boardUuid, BoardElementCreateRequest request) {
-        Board board = getBoardOrThrow(boardUuid);
+        Board board = boardRepository.findByUuid(boardUuid)
+                .orElseThrow(() -> new IllegalArgumentException("Доска не найдена"));
 
-        if (request.getWidth() == null || request.getWidth() <= 0 ||
-                request.getHeight() == null || request.getHeight() <= 0) {
-            throw new ValidationException("Width and height must be positive");
+        User currentUserOrNull = getCurrentUserOrNull();
+        log.info("createElement: board={}, mode={}, ownerId={}, currentUserId={}",
+                board.getUuid(), board.getAccessMode(),
+                board.getOwner() != null ? board.getOwner().getId() : null,
+                currentUserOrNull != null ? currentUserOrNull.getId() : null
+        );
+
+        if (!boardService.canEdit(board, currentUserOrNull)) {
+            throw new SecurityException("Нет прав на редактирование этой доски");
         }
+
 
         BoardElement element = new BoardElement();
         element.setBoard(board);
@@ -143,7 +171,6 @@ public class BoardElementServiceImpl implements BoardElementService {
         }
 
         if (request.getMediaId() != null) {
-            // TODO: найти MediaAsset и сделать element.setMedia(...)
         }
 
         if (request.getProperties() != null) {
@@ -152,10 +179,6 @@ public class BoardElementServiceImpl implements BoardElementService {
             element.setPropertiesJson("{}");
         }
 
-//        authUser.getCurrentUser().ifPresent(user -> {
-//            element.setCreatedBy(user);
-//            element.setUpdatedBy(user);
-//        });
         element.setCreatedAt(Instant.now());
         element.setUpdatedAt(Instant.now());
 
@@ -182,11 +205,14 @@ public class BoardElementServiceImpl implements BoardElementService {
     public BoardElementDto updateElement(UUID boardUuid,
                                          Long elementId,
                                          BoardElementUpdateRequest request) {
-        Board board = getBoardOrThrow(boardUuid);
-        BoardElement element = getElementForBoardOrThrow(board, elementId);
+        BoardElement element = elementRepository.findById(elementId)
+                .orElseThrow(() -> new IllegalArgumentException("Элемент не найден"));
 
-        if (element.isLockedEditing()) {
-            throw new ValidationException("Element editing is locked");
+        Board board = element.getBoard();
+        User currentUserOrNull = getCurrentUserOrNull();
+
+        if (!boardService.canEdit(board, currentUserOrNull)) {
+            throw new SecurityException("Нет прав на редактирование этой доски");
         }
 
         BoardElementDto beforeDto = elementMapper.toDto(element);
@@ -219,14 +245,12 @@ public class BoardElementServiceImpl implements BoardElementService {
         }
 
         if (request.getMediaId() != null) {
-            // TODO: обновить связь с MediaAsset
         }
 
         if (request.getProperties() != null) {
             element.setPropertiesJson(toJsonSafe(request.getProperties()));
         }
 
-//        authUser.getCurrentUser().ifPresent(element::setUpdatedBy);
         element.setUpdatedAt(Instant.now());
 
         elementRepository.save(element);
@@ -258,8 +282,6 @@ public class BoardElementServiceImpl implements BoardElementService {
         element.setWidth(request.getWidth());
         element.setHeight(request.getHeight());
         element.setRotation(request.getRotation());
-
-//        authUser.getCurrentUser().ifPresent(element::setUpdatedBy);
         element.setUpdatedAt(Instant.now());
 
         if (request.getProperties() != null) {
@@ -301,7 +323,6 @@ public class BoardElementServiceImpl implements BoardElementService {
             element.setLockedEditing(request.getLockedEditing());
         }
 
-//        authUser.getCurrentUser().ifPresent(element::setUpdatedBy);
         element.setUpdatedAt(Instant.now());
 
         elementRepository.save(element);
@@ -339,7 +360,6 @@ public class BoardElementServiceImpl implements BoardElementService {
         for (BoardElement el : elements) {
             el.setGroup(group);
             el.setUpdatedAt(Instant.now());
-//            authUser.getCurrentUser().ifPresent(el::setUpdatedBy);
         }
         elementRepository.saveAll(elements);
 
@@ -369,7 +389,6 @@ public class BoardElementServiceImpl implements BoardElementService {
         for (BoardElement el : elements) {
             el.setGroup(null);
             el.setUpdatedAt(Instant.now());
-//            authUser.getCurrentUser().ifPresent(el::setUpdatedBy);
         }
         elementRepository.saveAll(elements);
 
@@ -404,7 +423,6 @@ public class BoardElementServiceImpl implements BoardElementService {
             if (newZ != null) {
                 el.setZIndex(newZ);
                 el.setUpdatedAt(Instant.now());
-//                authUser.getCurrentUser().ifPresent(el::setUpdatedBy);
             }
         }
         elementRepository.saveAll(elements);
@@ -419,14 +437,15 @@ public class BoardElementServiceImpl implements BoardElementService {
     @Override
     @Transactional
     public void deleteElement(UUID boardUuid, Long elementId) {
-        Board board = getBoardOrThrow(boardUuid);
-        BoardElement element = getElementForBoardOrThrow(board, elementId);
+        BoardElement element = elementRepository.findById(elementId)
+                .orElseThrow(() -> new IllegalArgumentException("Элемент не найден"));
 
-//        elementLockService.getLockOwner(boardUuid, elementId).ifPresent(owner -> {
-//            if (!owner.equals(clientId)) {
-//                throw new ValidationException("Element is locked by another user");
-//            }
-//        });
+        Board board = element.getBoard();
+        User currentUserOrNull = getCurrentUserOrNull();
+
+        if (!boardService.canEdit(board, currentUserOrNull)) {
+            throw new SecurityException("Нет прав на редактирование этой доски");
+        }
 
         BoardElementDto beforeDto = elementMapper.toDto(element);
 
@@ -479,11 +498,6 @@ public class BoardElementServiceImpl implements BoardElementService {
             copy.setLockedEditing(false);
             copy.setMedia(original.getMedia());
             copy.setPropertiesJson(original.getPropertiesJson());
-
-//            authUser.getCurrentUser().ifPresent(user -> {
-//                copy.setCreatedBy(user);
-//                copy.setUpdatedBy(user);
-//            });
             copy.setCreatedAt(Instant.now());
             copy.setUpdatedAt(Instant.now());
 

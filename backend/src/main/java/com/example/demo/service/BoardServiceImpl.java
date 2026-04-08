@@ -4,166 +4,166 @@ import com.example.demo.dto.BoardDto;
 import com.example.demo.dto.CreateBoardRequest;
 import com.example.demo.dto.UpdateBoardRequest;
 import com.example.demo.model.Board;
-import com.example.demo.repository.BoardRepository;
-import com.example.demo.service.BoardService;
-import com.example.demo.exception.NotFoundException;
-import com.example.demo.exception.ValidationException;
-import com.example.demo.security.AuthUser;
+import com.example.demo.model.BoardAccessMode;
 import com.example.demo.model.User;
+import com.example.demo.repository.BoardRepository;
+import com.example.demo.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
-@Transactional(readOnly = true)
 public class BoardServiceImpl implements BoardService {
 
     private final BoardRepository boardRepository;
-//    private final AuthUser authUser;
+    private final UserRepository userRepository;
 
-
-//    private User getCurrentUserOrThrow() {
-//        return authUser.getCurrentUser()
-//                .orElseThrow(() -> new ValidationException("Authentication required"));
-//    }
-
-    private Board getBoardOrThrow(UUID boardUuid) {
-        return boardRepository.findByUuid(boardUuid)
-                .orElseThrow(() -> new NotFoundException("Board not found: " + boardUuid));
-    }
-
-//    /**
-//     * Проверка прав доступа:
-//     *  - если доска имеет owner -> только он может читать/изменять;
-//     *  - если owner == null (например, гостевая доска) – сейчас допускаем всех.
-//     * Можно усложнить в будущем.
-//     */
-private void checkAccessToBoard(Board board, boolean requireOwner) {
-    if (board.isTemporary() && board.getOwner() == null) {
-        if (board.getExpiresAt() != null &&
-                board.getExpiresAt().isBefore(Instant.now())) {
-            throw new NotFoundException("Board expired");
+    private User getCurrentUser() {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getPrincipal() == null) {
+            throw new IllegalStateException("Пользователь не аутентифицирован");
         }
-        return;
+        Object principal = auth.getPrincipal();
+        String email;
+        if (principal instanceof org.springframework.security.core.userdetails.UserDetails ud) {
+            email = ud.getUsername();
+        } else if (principal instanceof User u) {
+            email = u.getEmail();
+        } else {
+            throw new IllegalStateException("Неизвестный тип principal: " + principal.getClass());
+        }
+        return userRepository.findByEmail(email)
+                .orElseThrow(() -> new IllegalStateException("Пользователь не найден: " + email));
     }
-
-//    User current = authUser.getCurrentUser()
-//            .orElseThrow(() -> new ValidationException("Authentication required"));
-//
-//    if (!board.getOwner().getId().equals(current.getId())) {
-//        throw new ValidationException("Access denied");
-//    }
-
-}
 
     private BoardDto toDto(Board board) {
-        BoardDto dto = new BoardDto();
-        dto.setUuid(board.getUuid());
-        dto.setTitle(board.getTitle());
-        dto.setTemporary(board.isTemporary());
-        dto.setCreatedAt(board.getCreatedAt());
-        dto.setUpdatedAt(board.getUpdatedAt());
-        return dto;
+        Long ownerId = board.getOwner() != null ? board.getOwner().getId() : null;
+        return new BoardDto(
+                board.getUuid(),
+                board.getTitle(),
+                board.isTemporary(),
+                board.getCreatedAt(),
+                board.getUpdatedAt(),
+                board.getAccessMode(),
+                ownerId
+        );
     }
 
-//    @Override
-//    public List<BoardDto> getBoardsForCurrentUser() {
-//        User user = getCurrentUserOrThrow();
-//        List<Board> boards = boardRepository.findAllByOwnerOrderByCreatedAtDesc(user);
-//        return boards.stream()
-//                .map(this::toDto)
-//                .collect(Collectors.toList());
-//    }
+    private Board getBoardForView(UUID boardUuid, User currentUserOrNull) {
+        Board board = boardRepository.findByUuid(boardUuid)
+                .orElseThrow(() -> new IllegalArgumentException("Доска не найдена"));
 
-//    @Override
-//    public BoardDto createBoard(CreateBoardRequest request) {
-//        User user = getCurrentUserOrThrow();
-//
-//        if (request.getTitle() == null || request.getTitle().isBlank()) {
-//            throw new ValidationException("Title must not be blank");
-//        }
-//
-//        Board board = new Board();
-//        board.setUuid(UUID.randomUUID());
-//        board.setTitle(request.getTitle().trim());
-//        board.setOwner(user);
-//        board.setTemporary(Boolean.TRUE.equals(request.getTemporary()));
-//
-//        board.setCreatedAt(Instant.now());
-//        board.setUpdatedAt(Instant.now());
-//
-//        Board saved = boardRepository.save(board);
-//        return toDto(saved);
-//    }
+        BoardAccessMode mode = board.getAccessMode();
+
+        if (board.isTemporary() && board.getOwner() == null) {
+            return board;
+        }
+
+        if (mode == BoardAccessMode.PRIVATE) {
+            if (currentUserOrNull == null
+                    || board.getOwner() == null
+                    || !board.getOwner().getId().equals(currentUserOrNull.getId())) {
+                throw new SecurityException("Нет доступа к этой доске");
+            }
+        }
+
+        return board;
+    }
+
+    public boolean canEdit(Board board, User currentUserOrNull) {
+        if (currentUserOrNull != null && board.getOwner() != null
+                && board.getOwner().getId().equals(currentUserOrNull.getId())) {
+            return true;
+        }
+        return board.getAccessMode() == BoardAccessMode.LINK_EDIT;
+    }
+
+    public BoardDto updateAccessMode(UUID boardUuid, BoardAccessMode mode) {
+        User currentUser = getCurrentUser();
+        Board board = boardRepository.findByUuid(boardUuid)
+                .orElseThrow(() -> new IllegalArgumentException("Доска не найдена"));
+
+        if (board.getOwner() == null || !board.getOwner().getId().equals(currentUser.getId())) {
+            throw new SecurityException("Только владелец может изменять права доступа");
+        }
+
+        board.setAccessMode(mode);
+        Board saved = boardRepository.save(board);
+        return toDto(saved);
+    }
+
+    public List<BoardDto> getBoardsForCurrentUser() {
+        User currentUser = getCurrentUser();
+        List<Board> boards = boardRepository.findAllByOwnerId(currentUser.getId());
+        return boards.stream().map(this::toDto).toList();
+    }
+
+    @Override
+    public BoardDto createBoard(CreateBoardRequest request) {
+        User currentUser = getCurrentUser();
+        Board board = new Board();
+        board.setUuid(UUID.randomUUID());
+        board.setTitle(request.getTitle() != null && !request.getTitle().isBlank()
+                ? request.getTitle()
+                : "Новая доска");
+        board.setOwner(currentUser);
+        board.setAccessMode(BoardAccessMode.PRIVATE);
+        Board saved = boardRepository.save(board);
+        return toDto(saved);
+    }
 
     @Override
     public BoardDto getBoard(UUID boardUuid) {
-        Board board = getBoardOrThrow(boardUuid);
-        checkAccessToBoard(board, false);
+        User currentUserOrNull = null;
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getPrincipal() != null
+                && !"anonymousUser".equals(auth.getPrincipal())) {
+            currentUserOrNull = getCurrentUser();
+        }
+
+        Board board = getBoardForView(boardUuid, currentUserOrNull);
         return toDto(board);
     }
 
-//    @Override
-//    public BoardDto updateBoard(UUID boardUuid, UpdateBoardRequest request) {
-//        Board board = getBoardOrThrow(boardUuid);
-//        checkAccessToBoard(board, true);
-//
-//        boolean changed = false;
-//
-//        if (request.getTitle() != null) {
-//            String title = request.getTitle().trim();
-//            if (title.isEmpty()) {
-//                throw new ValidationException("Title must not be blank");
-//            }
-//            board.setTitle(title);
-//            changed = true;
-//        }
-//
-//        if (request.getTemporary() != null) {
-//            board.setTemporary(request.getTemporary());
-//            changed = true;
-//        }
-//
-//        if (changed) {
-//            board.setUpdatedAt(Instant.now());
-//
-//            boardRepository.save(board);
-//        }
-//
-//        return toDto(board);
-//    }
-
-//    @Override
-//    public void deleteBoard(UUID boardUuid) {
-//        Board board = getBoardOrThrow(boardUuid);
-//        checkAccessToBoard(board, true);
-//
-//        boardRepository.delete(board);
-//    }
+    @Override
+    public BoardDto updateBoard(UUID boardUuid, UpdateBoardRequest request) {
+        User currentUser = getCurrentUser();
+        Board board = boardRepository.findByUuid(boardUuid)
+                .orElseThrow(() -> new IllegalArgumentException("Доска не найдена"));
+        if (board.getOwner() == null || !board.getOwner().getId().equals(currentUser.getId())) {
+            throw new SecurityException("Нет прав на изменение этой доски");
+        }
+        if (request.getTitle() != null && !request.getTitle().isBlank()) {
+            board.setTitle(request.getTitle());
+        }
+        Board saved = boardRepository.save(board);
+        return toDto(saved);
+    }
 
     @Override
-    @Transactional
-    public BoardDto createTemporaryBoard(String title) {
-        String actualTitle = (title == null || title.isBlank())
-                ? "Untitled board"
-                : title.trim();
+    public void deleteBoard(UUID boardUuid) {
+        User currentUser = getCurrentUser();
+        Board board = boardRepository.findByUuid(boardUuid)
+                .orElseThrow(() -> new IllegalArgumentException("Доска не найдена"));
+        if (board.getOwner() == null || !board.getOwner().getId().equals(currentUser.getId())) {
+            throw new SecurityException("Нет прав на удаление этой доски");
+        }
+        boardRepository.delete(board);
+    }
 
+    @Override
+    public BoardDto createTemporaryBoard(String title) {
         Board board = new Board();
         board.setUuid(UUID.randomUUID());
-        board.setTitle(actualTitle);
+        board.setTitle(title != null && !title.isBlank() ? title : "Временная доска");
         board.setOwner(null);
         board.setTemporary(true);
-        board.setCreatedAt(Instant.now());
-        board.setUpdatedAt(Instant.now());
-
-        board.setExpiresAt(Instant.now().plusSeconds(60L * 60 * 24 * 7)); // 7 дней
-
-        return toDto(boardRepository.save(board));
+        board.setAccessMode(BoardAccessMode.LINK_EDIT);
+        Board saved = boardRepository.save(board);
+        return toDto(saved);
     }
 }
