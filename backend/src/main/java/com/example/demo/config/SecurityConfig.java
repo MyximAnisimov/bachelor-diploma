@@ -54,13 +54,13 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.GET, "/api/boards/*").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/boards/*/elements").permitAll()
-                        .requestMatchers("/api/boards").authenticated()
+                        .requestMatchers(HttpMethod.POST, "/api/boards/*/elements").permitAll()
+                        .requestMatchers(HttpMethod.PATCH, "/api/boards/*/elements/**").permitAll()
+                        .requestMatchers(HttpMethod.DELETE, "/api/boards/*/elements/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/boards").authenticated()
+
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/ws/**").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/api/boards/*/elements").permitAll()
-                        .requestMatchers(HttpMethod.PUT, "/api/elements/*").permitAll()
-                        .requestMatchers(HttpMethod.PATCH, "/api/elements/*").permitAll()
-                        .requestMatchers(HttpMethod.DELETE, "/api/elements/*").permitAll()
 
                         .anyRequest().authenticated()
                 )

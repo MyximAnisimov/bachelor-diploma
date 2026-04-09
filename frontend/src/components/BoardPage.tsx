@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo  } from 'react';
 import { useParams } from 'react-router-dom';
 import { getBoard } from '../api/boards';
 import { getBoardElements, createElement } from '../api/elements';
@@ -7,6 +7,8 @@ import { clientId } from '../api/clientId';
 import type { BoardDto, BoardElementDto } from '../api/types';
 import { BoardCanvas } from './BoardCanvas';
 import { uploadFile } from '../api/files';
+import { useAuth } from '../context/AuthContext';
+import { api } from '../api/http';
 
 type Tool = 'SELECT' | 'HAND' | 'BRUSH' | 'TEXT' | 'STICKER' | 'ARROW' | 'MEDIA';
 
@@ -22,6 +24,7 @@ export const BoardPage: React.FC = () => {
 
   const { boardUuid } = useParams<{ boardUuid: string }>();
   const [board, setBoard] = useState<BoardDto | null>(null);
+  const [user, setUser] = useState<UserDto | null>(null);
   const [elements, setElements] = useState<BoardElementDto[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -33,9 +36,11 @@ export const BoardPage: React.FC = () => {
   const [brushColor, setBrushColor] = useState('#000000');
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [isMediaDialogOpen, setIsMediaDialogOpen] = useState(false);
+  const { currentUser } = useAuth();
 
   useEffect(() => {
       console.log('BoardPage mount, boardUuid =', boardUuid);
+      console.log('BoardPage user/board', { currentUser, ownerId: board?.ownerId });
     if (!boardUuid) return;
     (async () => {
       try {
@@ -174,21 +179,89 @@ useBoardWs({
   },
 });
 
-console.log('RENDER BoardPage', { loading, board });
+  const isOwner =
+    !!currentUser && board && board.ownerId === currentUser.id;
+
+    const boardCanEdit = useMemo(() => {
+      if (!board) return false;
+      // владелец всегда может
+      if (user && board.ownerId && user.id === board.ownerId) return true;
+      // гость/любой другой — только при LINK_EDIT
+      return board.accessMode === 'LINK_EDIT';
+    }, [board, user]);
+
+  const handleChangeAccess = async (newMode: 'PRIVATE' | 'LINK_VIEW' | 'LINK_EDIT') => {
+    if (!board) return;
+    try {
+      const res = await api.patch<BoardDto>(`/api/boards/${board.uuid}/access`, {
+        accessMode: newMode,
+      });
+      setBoard(res.data);
+    } catch (e) {
+      console.error('Failed to update access mode', e);
+    }
+  };
+
+  const handleCopyLink = () => {
+    if (!board) return;
+    const link = `${window.location.origin}/boards/${board.uuid}`;
+    navigator.clipboard.writeText(link).catch(err => console.error('Copy failed', err));
+  };
+
+   console.log('BoardPage user/board', { currentUser, ownerId: board?.ownerId });
+
+  console.log('RENDER BoardPage', { loading, board });
   if (loading || !board) return <div>Загрузка...</div>;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <header
-        style={{
-          padding: 8,
-          borderBottom: '1px solid #ccc',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-        }}
-      >
-        <h2 style={{ marginRight: 16 }}>{board.title}</h2>
+          style={{
+            padding: 8,
+            borderBottom: '1px solid #ccc',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
+          <h2 style={{ marginRight: 16 }}>{board.title}</h2>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginRight: 16 }}>
+            {isOwner ? (
+              <>
+                <label style={{ fontSize: 12 }}>
+                  Доступ для гостей:{' '}
+                  <select
+                    value={board.accessMode}
+                    onChange={e =>
+                      handleChangeAccess(e.target.value as 'PRIVATE' | 'LINK_VIEW' | 'LINK_EDIT')
+                    }
+                  >
+                    <option value="PRIVATE">Только владелец</option>
+                    <option value="LINK_VIEW">По ссылке — только просмотр</option>
+                    <option value="LINK_EDIT">По ссылке — редактирование</option>
+                  </select>
+                </label>
+                <button type="button" onClick={handleCopyLink}>
+                  Скопировать ссылку
+                </button>
+              </>
+            ) : (
+              <>
+                <button type="button" onClick={handleCopyLink}>
+                  Скопировать ссылку
+                </button>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>
+                  Доступ:{' '}
+                  {board.accessMode === 'PRIVATE'
+                    ? 'только владелец'
+                    : board.accessMode === 'LINK_VIEW'
+                    ? 'по ссылке (только просмотр)'
+                    : 'по ссылке (редактирование)'}
+                </span>
+              </>
+            )}
+          </div>
 
         <button
           onClick={() => setTool('SELECT')}
@@ -428,6 +501,7 @@ console.log('RENDER BoardPage', { loading, board });
           setSelectedIds={setSelectedIds}
           shapeKind={shapeKind}
           setTool={setTool}
+          boardCanEdit={boardCanEdit}
         />
       </div>
 

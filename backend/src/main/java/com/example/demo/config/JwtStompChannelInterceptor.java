@@ -24,6 +24,7 @@ public class JwtStompChannelInterceptor implements ChannelInterceptor {
 
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
+
         StompHeaderAccessor accessor =
                 MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
         if (accessor == null) {
@@ -31,28 +32,29 @@ public class JwtStompChannelInterceptor implements ChannelInterceptor {
         }
 
         if (StompCommand.CONNECT.equals(accessor.getCommand())) {
-            log.info("STOMP CONNECT, headers = " + accessor.toNativeHeaderMap());
             String authHeader = accessor.getFirstNativeHeader("Authorization");
 
             if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-                throw new IllegalArgumentException("No Authorization header in STOMP CONNECT");
+                return message;
             }
 
             String token = authHeader.substring(7);
-            try {
-                String email = jwtService.getEmailFromToken(token);
-                log.info("STOMP email from token = " + email);
-                UserDetails userDetails = userDetailsService.loadUserByUsername(email);
-
-                UsernamePasswordAuthenticationToken auth =
-                        new UsernamePasswordAuthenticationToken(
-                                userDetails, null, userDetails.getAuthorities());
-
-                accessor.setUser(auth);
-                log.info("STOMP auth set for user " + email);
-            } catch (Exception e) {
-                throw new IllegalArgumentException("Invalid JWT in STOMP CONNECT", e);
+            String username = jwtService.extractUsername(token);
+            if (username == null) {
+                return message;
             }
+
+            UserDetails userDetails = userDetailsService.loadUserByUsername(username);
+            if (!jwtService.isTokenValid(token, userDetails)) {
+                return message;
+            }
+
+            UsernamePasswordAuthenticationToken authentication =
+                    new UsernamePasswordAuthenticationToken(
+                            userDetails, null, userDetails.getAuthorities()
+                    );
+
+            accessor.setUser(authentication);
         }
 
         return message;

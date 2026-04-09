@@ -5,11 +5,13 @@ import com.example.demo.dto.ws.ElementLockMessage;
 import com.example.demo.model.Board;
 import com.example.demo.model.User;
 import com.example.demo.repository.BoardRepository;
+import com.example.demo.repository.UserRepository;
 import com.example.demo.service.BoardService;
 import com.example.demo.service.ElementLockService;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Controller;
 
 import java.security.Principal;
@@ -22,20 +24,30 @@ public class BoardWsController {
     private final SimpMessagingTemplate messagingTemplate;
     private final BoardRepository boardRepository;
     private final BoardService boardService;
+    private final UserRepository userRepository;
 
     public BoardWsController(ElementLockService lockService,
                              SimpMessagingTemplate messagingTemplate,
                              BoardRepository boardRepository,
-                             BoardService boardService) {
+                             BoardService boardService,
+                             UserRepository userRepository) {
         this.lockService = lockService;
         this.messagingTemplate = messagingTemplate;
         this.boardRepository = boardRepository;
         this.boardService = boardService;
+        this.userRepository = userRepository;
     }
 
     private User getCurrentUserOrNull(Principal principal) {
-        if (principal instanceof Authentication auth && auth.getPrincipal() instanceof User u) {
+        if (!(principal instanceof Authentication auth)) {
+            return null;
+        }
+        Object p = auth.getPrincipal();
+        if (p instanceof User u) {
             return u;
+        }
+        if (p instanceof UserDetails ud) {
+            return userRepository.findByEmail(ud.getUsername()).orElse(null);
         }
         return null;
     }

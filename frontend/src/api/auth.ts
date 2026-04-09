@@ -27,3 +27,15 @@ export async function login(email: string, password: string) {
   });
   return res.data;
 }
+
+export async function getCurrentUser(): Promise<UserDto | null> {
+  try {
+    const res = await api.get<UserDto>('/api/auth/me');
+    return res.data;
+  } catch (e: any) {
+    if (e.response?.status === 401) {
+      return null;
+    }
+    throw e;
+  }
+}

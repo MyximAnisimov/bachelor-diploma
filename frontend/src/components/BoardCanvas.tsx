@@ -29,6 +29,7 @@ interface Props {
   remoteCursors: Record<string, { x: number; y: number }>;
   selectedIds: number[];                           // ←
   setSelectedIds: Dispatch<SetStateAction<number[]>>;
+  boardCanEdit: boolean;
 }
 
 interface ArrowProperties {
@@ -90,6 +91,7 @@ export const BoardCanvas: React.FC<Props> = ({
   selectedIds,
   setSelectedIds,
   shapeKind,
+  boardCanEdit,
 }) => {
   const [selectionRect, setSelectionRect] = useState<SelectionRectState>({
     visible: false,
@@ -1011,7 +1013,7 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
                     key={el.id}
                     element={el}
                     isSelected={selectedIds.includes(el.id)}
-                    canDrag={tool === 'SELECT' && !isLockedByOther && !el.lockedPosition}
+                    canDrag={boardCanEdit && tool === 'SELECT' && !isLockedByOther && !el.lockedPosition}
                     onClick={(evt) => handleElementClick(el, evt)}
                     onContextMenu={(evt) => handleElementContextMenu(el, evt)}
                     onChange={handleElementChange}
@@ -1060,7 +1062,7 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
               }
 
                 if (el.type === 'MEDIA') {
-                  const canEdit = tool === 'SELECT' && !isLockedByOther;
+                  const canEdit = boardCanEdit && tool === 'SELECT' && !isLockedByOther;
 
                   return (
                     <MediaElement
@@ -1143,7 +1145,7 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
               }
 
               if (el.type === 'ARROW') {
-                const canEdit = tool === 'SELECT' && !isLockedByOther;
+                const canEdit = boardCanEdit && tool === 'SELECT' && !isLockedByOther;
                 const canDragArrow = tool === 'SELECT' && !isLockedByOther;
                 return (
                   <ArrowElement

@@ -7,7 +7,10 @@ import com.example.demo.repository.UserRepository;
 import com.example.demo.service.JwtService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -76,6 +79,33 @@ public class AuthController {
                         "email", user.getEmail(),
                         "name", user.getDisplayName()
                 )
+        ));
+    }
+
+    @GetMapping("/me")
+    public ResponseEntity<?> me(Authentication authentication) {
+        if (authentication == null || authentication.getPrincipal() == null
+                || "anonymousUser".equals(authentication.getPrincipal())) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("error", "Not authenticated"));
+        }
+
+        Object principal = authentication.getPrincipal();
+        User user;
+
+        if (principal instanceof User u) {
+            user = u;
+        } else if (principal instanceof UserDetails ud) {
+            user = userRepository.findByEmail(ud.getUsername())
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
+        } else {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unknown principal");
+        }
+
+        return ResponseEntity.ok(Map.of(
+                "id", user.getId(),
+                "email", user.getEmail(),
+                "name", user.getDisplayName()
         ));
     }
 }

@@ -1,5 +1,7 @@
 export type ElementType = 'SHAPE' | 'TEXT' | 'STICKY' | 'ARROW' | 'BRUSH' | 'MEDIA';
 
+export type BoardAccessMode = 'PRIVATE' | 'LINK_VIEW' | 'LINK_EDIT';
+
 export type Tool =
   | 'SELECT'
   | 'HAND'
@@ -21,6 +23,8 @@ export interface BoardDto {
   temporary: boolean;
   createdAt: string;
   updatedAt: string;
+  accessMode: BoardAccessMode;
+  ownerId: number | null;
 }
 
 export interface BoardElementDto {
@@ -88,4 +92,11 @@ export interface ElementTransformRequest {
   width: number;
   height: number;
   rotation: number;
+}
+
+export interface UserDto {
+  id: number;
+  email: string;
+  name?: string;
+  avatarUrl?: string;
 }

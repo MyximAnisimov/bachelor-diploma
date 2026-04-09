@@ -267,6 +267,12 @@ public class BoardElementServiceImpl implements BoardElementService {
                                             Long elementId,
                                             ElementTransformRequest request) {
         Board board = getBoardOrThrow(boardUuid);
+
+        User currentUserOrNull = getCurrentUserOrNull();
+        if (!boardService.canEdit(board, currentUserOrNull)) {
+            throw new SecurityException("Нет прав на редактирование этой доски");
+        }
+
         BoardElement element = getElementForBoardOrThrow(board, elementId);
 
         elementLockService.getLockOwner(boardUuid, elementId).ifPresent(owner -> {
@@ -276,18 +282,15 @@ public class BoardElementServiceImpl implements BoardElementService {
         });
 
         BoardElementDto beforeDto = elementMapper.toDto(element);
-
         element.setX(request.getX());
         element.setY(request.getY());
         element.setWidth(request.getWidth());
         element.setHeight(request.getHeight());
         element.setRotation(request.getRotation());
         element.setUpdatedAt(Instant.now());
-
         if (request.getProperties() != null) {
             element.setPropertiesJson(toJsonSafe(request.getProperties()));
         }
-
         elementRepository.save(element);
 
         BoardElementDto afterDto = elementMapper.toDto(element);
@@ -312,10 +315,14 @@ public class BoardElementServiceImpl implements BoardElementService {
                                        Long elementId,
                                        ElementLockRequest request) {
         Board board = getBoardOrThrow(boardUuid);
+
+        User currentUserOrNull = getCurrentUserOrNull();
+        if (!boardService.canEdit(board, currentUserOrNull)) {
+            throw new SecurityException("Нет прав на редактирование этой доски");
+        }
+
         BoardElement element = getElementForBoardOrThrow(board, elementId);
-
         BoardElementDto beforeDto = elementMapper.toDto(element);
-
         if (request.getLockedPosition() != null) {
             element.setLockedPosition(request.getLockedPosition());
         }
@@ -338,6 +345,11 @@ public class BoardElementServiceImpl implements BoardElementService {
     public GroupElementsResponse groupElements(UUID boardUuid,
                                                GroupElementsRequest request) {
         Board board = getBoardOrThrow(boardUuid);
+
+        User currentUserOrNull = getCurrentUserOrNull();
+        if (!boardService.canEdit(board, currentUserOrNull)) {
+            throw new SecurityException("Нет прав на редактирование этой доски");
+        }
 
         List<BoardElement> elements = elementRepository.findAllById(request.getElementIds());
         if (elements.size() != request.getElementIds().size()) {
@@ -379,6 +391,11 @@ public class BoardElementServiceImpl implements BoardElementService {
                                 UngroupElementsRequest request) {
         Board board = getBoardOrThrow(boardUuid);
 
+        User currentUserOrNull = getCurrentUserOrNull();
+        if (!boardService.canEdit(board, currentUserOrNull)) {
+            throw new SecurityException("Нет прав на редактирование этой доски");
+        }
+
         UUID groupUuid = UUID.fromString(request.getGroupId());
         ElementGroup group = groupRepository.findByUuidAndBoardUuid(groupUuid, boardUuid)
                 .orElseThrow(() -> new ValidationException("Group not found: " + request.getGroupId()));
@@ -402,6 +419,11 @@ public class BoardElementServiceImpl implements BoardElementService {
     public void reorderElements(UUID boardUuid,
                                 ReorderElementsRequest request) {
         Board board = getBoardOrThrow(boardUuid);
+
+        User currentUserOrNull = getCurrentUserOrNull();
+        if (!boardService.canEdit(board, currentUserOrNull)) {
+            throw new SecurityException("Нет прав на редактирование этой доски");
+        }
 
         Map<Long, Integer> idToZIndex = request.getOrders().stream()
                 .collect(Collectors.toMap(ElementOrderDto::getId, ElementOrderDto::getZIndex));
@@ -469,6 +491,11 @@ public class BoardElementServiceImpl implements BoardElementService {
     public CopyElementsResponse copyElements(UUID boardUuid,
                                              CopyElementsRequest request) {
         Board board = getBoardOrThrow(boardUuid);
+
+        User currentUserOrNull = getCurrentUserOrNull();
+        if (!boardService.canEdit(board, currentUserOrNull)) {
+            throw new SecurityException("Нет прав на редактирование этой доски");
+        }
 
         List<BoardElement> originals = elementRepository.findAllById(request.getElementIds());
         if (originals.size() != request.getElementIds().size()) {

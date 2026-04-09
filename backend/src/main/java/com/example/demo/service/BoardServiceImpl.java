@@ -40,6 +40,26 @@ public class BoardServiceImpl implements BoardService {
                 .orElseThrow(() -> new IllegalStateException("Пользователь не найден: " + email));
     }
 
+    private User getCurrentUserOrNull() {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getPrincipal() == null
+                || "anonymousUser".equals(auth.getPrincipal())) {
+            return null;
+        }
+
+        Object principal = auth.getPrincipal();
+        String email;
+        if (principal instanceof org.springframework.security.core.userdetails.UserDetails ud) {
+            email = ud.getUsername();
+        } else if (principal instanceof User u) {
+            email = u.getEmail();
+        } else {
+            return null;
+        }
+
+        return userRepository.findByEmail(email).orElse(null);
+    }
+
     private BoardDto toDto(Board board) {
         Long ownerId = board.getOwner() != null ? board.getOwner().getId() : null;
         return new BoardDto(
@@ -57,25 +77,31 @@ public class BoardServiceImpl implements BoardService {
         Board board = boardRepository.findByUuid(boardUuid)
                 .orElseThrow(() -> new IllegalArgumentException("Доска не найдена"));
 
-        BoardAccessMode mode = board.getAccessMode();
-
-        if (board.isTemporary() && board.getOwner() == null) {
-            return board;
-        }
-
-        if (mode == BoardAccessMode.PRIVATE) {
-            if (currentUserOrNull == null
-                    || board.getOwner() == null
-                    || !board.getOwner().getId().equals(currentUserOrNull.getId())) {
-                throw new SecurityException("Нет доступа к этой доске");
-            }
+        if (!canView(board, currentUserOrNull)) {
+            throw new SecurityException("Нет доступа к этой доске");
         }
 
         return board;
     }
 
+    public boolean canView(Board board, User currentUserOrNull) {
+        if (currentUserOrNull != null
+                && board.getOwner() != null
+                && board.getOwner().getId().equals(currentUserOrNull.getId())) {
+            return true;
+        }
+        if (board.isTemporary() && board.getOwner() == null) {
+            return true;
+        }
+        return switch (board.getAccessMode()) {
+            case PRIVATE -> false;
+            case LINK_VIEW, LINK_EDIT -> true;
+        };
+    }
+
     public boolean canEdit(Board board, User currentUserOrNull) {
-        if (currentUserOrNull != null && board.getOwner() != null
+        if (currentUserOrNull != null
+                && board.getOwner() != null
                 && board.getOwner().getId().equals(currentUserOrNull.getId())) {
             return true;
         }
@@ -84,6 +110,7 @@ public class BoardServiceImpl implements BoardService {
 
     public BoardDto updateAccessMode(UUID boardUuid, BoardAccessMode mode) {
         User currentUser = getCurrentUser();
+
         Board board = boardRepository.findByUuid(boardUuid)
                 .orElseThrow(() -> new IllegalArgumentException("Доска не найдена"));
 
@@ -118,13 +145,7 @@ public class BoardServiceImpl implements BoardService {
 
     @Override
     public BoardDto getBoard(UUID boardUuid) {
-        User currentUserOrNull = null;
-        var auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth != null && auth.getPrincipal() != null
-                && !"anonymousUser".equals(auth.getPrincipal())) {
-            currentUserOrNull = getCurrentUser();
-        }
-
+        User currentUserOrNull = getCurrentUserOrNull();
         Board board = getBoardForView(boardUuid, currentUserOrNull);
         return toDto(board);
     }
