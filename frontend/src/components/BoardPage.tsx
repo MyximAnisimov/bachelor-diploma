@@ -1,7 +1,7 @@
-import React, { useEffect, useState, useMemo  } from 'react';
+import React, { useEffect, useRef, useState, useMemo  } from 'react';
 import { useParams } from 'react-router-dom';
-import { getBoard } from '../api/boards';
-import { getBoardElements, createElement } from '../api/elements';
+import { getBoard, createBoardVideoRoom } from '../api/boards';
+import { getBoardElements, createElement, updateElement, transformElement } from '../api/elements';
 import { useBoardWs } from '../hooks/useBoardsWs';
 import { clientId } from '../api/clientId';
 import type { BoardDto, BoardElementDto } from '../api/types';
@@ -9,8 +9,26 @@ import { BoardCanvas } from './BoardCanvas';
 import { uploadFile } from '../api/files';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/http';
+import { useBoardWebRTC } from '../webrtc/useBoardWebRtc';
+import { WebRTCRoom } from '../webrtc/WebRTCRoom';
 
 type Tool = 'SELECT' | 'HAND' | 'BRUSH' | 'TEXT' | 'STICKER' | 'ARROW' | 'MEDIA';
+
+type ActiveCall = {
+  id: string;
+  boardUuid: string;
+  createdBy: string;
+  createdAt: string;
+};
+
+type CallSignalMessage =
+  | {
+      type: 'CALL_STARTED';
+      boardUuid: string;
+      callId: string;
+      createdBy: string;
+      createdAt: string;
+    };
 
 type ShapeKind =
      | 'RECT'
@@ -20,8 +38,16 @@ type ShapeKind =
      | 'TRIANGLE'
      | 'CYLINDER';
 
-export const BoardPage: React.FC = () => {
+  interface ElementsState {
+    [id: number]: ElementDto;
+  }
 
+  interface HistoryEntry {
+    before: ElementsState;
+    after: ElementsState;
+  }
+
+export const BoardPage: React.FC = () => {
   const { boardUuid } = useParams<{ boardUuid: string }>();
   const [board, setBoard] = useState<BoardDto | null>(null);
   const [user, setUser] = useState<UserDto | null>(null);
@@ -37,6 +63,99 @@ export const BoardPage: React.FC = () => {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [isMediaDialogOpen, setIsMediaDialogOpen] = useState(false);
   const { currentUser } = useAuth();
+  const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
+  const [incomingCall, setIncomingCall] = useState<ActiveCall | null>(null);
+  const sendRtcRef = useRef<(msg: RtcSignalMessage) => void>(() => {});
+  const sendCallRef = useRef<(msg: CallSignalMessage) => void>(() => {});
+
+  const {
+    localStream,
+    remoteStreams,
+    inCall,
+    startCall,
+    leaveCall,
+    cameraEnabled,
+    micEnabled,
+    toggleCamera,
+    toggleMic,
+  } = useBoardWebRTC(board?.uuid);
+
+const readyForCall = !!board && !!localStream;
+
+async function syncUndoEntryToServer(entry: HistoryEntry) {
+  const elementsToSave = Object.values(entry.before ?? {});
+
+  await Promise.all(
+    elementsToSave.map((el) =>
+      transformElement(board.uuid, el.id, toUpdatePayload(el)).catch((err) => {
+        console.error('Failed to sync undo element', el.id, err);
+      }),
+    ),
+  );
+}
+
+function undo() {
+  if (!canUndo) return;
+  const entry = history[historyIndex];
+  if (!entry) return;
+
+  setElements((prev) => {
+    const map = new Map(prev.map((e) => [e.id, e]));
+    Object.values(entry.before ?? {}).forEach((el) => {
+      map.set(el.id, el);
+    });
+    return Array.from(map.values());
+  });
+
+  syncUndoEntryToServer(entry);
+
+  setHistoryIndex((idx) => idx - 1);
+}
+
+async function syncRedoEntryToServer(entry: HistoryEntry) {
+  const elementsToSave = Object.values(entry.after ?? {});
+
+  await Promise.all(
+    elementsToSave.map((el) =>
+      transformElement(board.uuid, el.id, toUpdatePayload(el)).catch((err) => {
+        console.error('Failed to sync redo element', el.id, err);
+      }),
+    ),
+  );
+}
+
+function redo() {
+  if (!canRedo) return;
+  const entry = history[historyIndex + 1];
+  if (!entry) return;
+
+  setElements((prev) => {
+    const map = new Map(prev.map((e) => [e.id, e]));
+    Object.values(entry.after ?? {}).forEach((el) => {
+      map.set(el.id, el);
+    });
+    return Array.from(map.values());
+  });
+
+  syncRedoEntryToServer(entry);
+
+  setHistoryIndex((idx) => idx + 1);
+}
+
+function toUpdatePayload(el: BoardElementDto) {
+  return {
+    type: el.type,
+    x: el.x,
+    y: el.y,
+    width: el.width,
+    height: el.height,
+    rotation: el.rotation,
+    zIndex: el.zIndex,
+    groupId: el.groupId ?? undefined,
+    mediaId: el.mediaId ?? undefined,
+    properties: el.properties,
+  };
+}
 
   useEffect(() => {
       console.log('BoardPage mount, boardUuid =', boardUuid);
@@ -59,23 +178,153 @@ export const BoardPage: React.FC = () => {
     })();
   }, [boardUuid]);
 
-  const handleAddRect = async () => {
-    if (!boardUuid) return;
-    const el = await createElement(boardUuid, {
-      type: 'SHAPE',
-      x: 100,
-      y: 100,
-      width: 200,
-      height: 100,
-      rotation: 0,
-      properties: {
-        shapeType: 'RECT',
-        fill: '#ffcc00',
-        stroke: '#333',
-      },
+const handleAddRect = async () => {
+  if (!boardUuid) return;
+  const el = await createElement(boardUuid, {
+    type: 'SHAPE',
+    x: 100,
+    y: 100,
+    width: 200,
+    height: 100,
+    rotation: 0,
+    properties: {
+      shapeType: 'RECT',
+      fill: '#ffcc00',
+      stroke: '#333',
+    },
+  });
+
+  addElements([el], { recordHistory: true });
+};
+
+function applyElementChanges(
+  changes: { id: number; patch: Partial<ElementDto> }[],
+  options?: { recordHistory?: boolean },
+) {
+  setElements((prev) => {
+    const map = new Map(prev.map((e) => [e.id, e]));
+    const before: ElementsState = {};
+    const after: ElementsState = {};
+
+    for (const { id, patch } of changes) {
+      const current = map.get(id);
+      if (!current) continue;
+      before[id] = current;
+      const updated = { ...current, ...patch };
+      map.set(id, updated);
+      after[id] = updated;
+    }
+
+    const next = Array.from(map.values());
+
+    if (options?.recordHistory) {
+      setHistory((prevHistory) => {
+        const trimmed = prevHistory.slice(0, historyIndex + 1);
+
+        const newHistory = [...trimmed, { before, after }];
+
+        setHistoryIndex(newHistory.length - 1);
+
+        return newHistory;
+      });
+    }
+
+    return next;
+  });
+}
+
+function addElements(newElements: ElementDto[], options?: { recordHistory?: boolean }) {
+  setElements(prev => {
+    const before: ElementsState = {};
+    const after: ElementsState = {};
+
+    newElements.forEach(el => {
+      after[el.id] = el;
     });
-    setElements(prev => [...prev, el]);
+
+    const next = [...prev, ...newElements];
+
+    if (options?.recordHistory) {
+      setHistory(prevHistory => {
+        const trimmed = prevHistory.slice(0, historyIndex + 1);
+        const newHistory = [...trimmed, { before, after }];
+        setHistoryIndex(newHistory.length - 1);
+        return newHistory;
+      });
+    }
+
+    return next;
+  });
+}
+
+function deleteElements(
+  ids: number[],
+  options?: { recordHistory?: boolean },
+) {
+  setElements((prev) => {
+    const before: ElementsState = {};
+    const after: ElementsState = {};
+
+    prev.forEach((el) => {
+      if (ids.includes(el.id)) {
+        before[el.id] = el;
+      }
+    });
+
+    const next = prev.filter((el) => !ids.includes(el.id));
+
+    if (options?.recordHistory && Object.keys(before).length > 0) {
+      setHistory((prevHistory) => {
+        const trimmed = prevHistory.slice(0, historyIndex + 1);
+        const newHistory = [...trimmed, { before, after }];
+        setHistoryIndex(newHistory.length - 1);
+        return newHistory;
+      });
+    }
+
+    return next;
+  });
+}
+
+function handleStartVideoConference() {
+  if (!board) return;
+
+  if (!board || !localStream) {
+    console.warn('Нельзя начать видеоконференцию: нет board или localStream');
+    return;
+  }
+
+  const callId =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+  const createdBy = currentUser?.id ?? clientId;
+  const createdAt = new Date().toISOString();
+
+  const msg: CallSignalMessage = {
+    type: 'CALL_STARTED',
+    boardUuid: board.uuid,
+    callId,
+    createdBy,
+    createdAt,
   };
+
+  const call: ActiveCall = { id: callId, boardUuid: board.uuid, createdBy, createdAt };
+  setActiveCall(call);
+  sendCallRef.current?.(msg);
+  startCall();
+}
+
+async function transformElementOnServer(
+  boardUuid: string,
+  elementId: number,
+  el: BoardElementDto,
+): Promise<BoardElementDto> {
+  const payload = toUpdatePayload(el);
+  const saved = await transformElement(boardUuid, elementId, payload);
+  return saved;
+}
 
 const handleUploadMedia = async (file: File) => {
   try {
@@ -136,19 +385,18 @@ useBoardWs({
 
     setLocks((prev) => {
       const copy: Record<number, string> = { ...prev };
-
+      const ids = elementIds ?? [];
       if (action === 'LOCK') {
-        elementIds.forEach((id: number) => {
+        ids.forEach((id: number) => {
           copy[id] = owner;
         });
       } else if (action === 'UNLOCK') {
-        elementIds.forEach((id: number) => {
+        ids.forEach((id: number) => {
           if (copy[id] === owner) {
             delete copy[id];
           }
         });
       }
-
       return copy;
     });
   },
@@ -163,7 +411,7 @@ useBoardWs({
   },
 
   onElementMessage: (msg) => {
-      console.log('WS ELEMENT MSG', msg);
+    console.log('WS ELEMENT MSG', msg);
     setElements((prev) => {
       if (msg.action === 'DELETE') {
         return prev.filter((el) => el.id !== msg.element.id);
@@ -177,6 +425,32 @@ useBoardWs({
       return [...prev, msg.element];
     });
   },
+
+  onCallMessage: (msg: CallSignalMessage) => {
+    if (msg.type === 'CALL_STARTED' && msg.boardUuid === board.uuid) {
+      const call: ActiveCall = {
+        id: msg.callId,
+        boardUuid: msg.boardUuid,
+        createdBy: msg.createdBy,
+        createdAt: msg.createdAt,
+      };
+
+      setActiveCall(call);
+
+      const me = currentUser?.id ?? clientId;
+      if (msg.createdBy !== me) {
+        setIncomingCall(call);
+      }
+    }
+  },
+
+  setSendRtc: (fn) => {
+    sendRtcRef.current = fn;
+  },
+
+  setSendCall: (fn) => {
+    sendCallRef.current = fn;
+  },
 });
 
   const isOwner =
@@ -184,9 +458,7 @@ useBoardWs({
 
     const boardCanEdit = useMemo(() => {
       if (!board) return false;
-      // владелец всегда может
       if (user && board.ownerId && user.id === board.ownerId) return true;
-      // гость/любой другой — только при LINK_EDIT
       return board.accessMode === 'LINK_EDIT';
     }, [board, user]);
 
@@ -208,11 +480,19 @@ useBoardWs({
     navigator.clipboard.writeText(link).catch(err => console.error('Copy failed', err));
   };
 
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [historyIndex, setHistoryIndex] = useState<number>(-1);
+  const canUndo = historyIndex >= 0;
+  const canRedo = historyIndex < history.length - 1;
+
+  const showHistoryControls = boardCanEdit;
+
    console.log('BoardPage user/board', { currentUser, ownerId: board?.ownerId });
 
   console.log('RENDER BoardPage', { loading, board });
   if (loading || !board) return <div>Загрузка...</div>;
 
+console.log('HISTORY', historyIndex, history);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <header
@@ -483,9 +763,75 @@ useBoardWs({
         >
           Медиа
         </button>
+        <button
+          type="button"
+          onClick={handleStartVideoConference}
+          disabled={!readyForCall}
+          style={{
+            padding: '4px 8px',
+            marginLeft: 8,
+            background: readyForCall ? (activeCall ? '#1976d2' : '#eee') : '#ccc',
+            color: readyForCall ? (activeCall ? '#fff' : '#777') : '#777',
+            cursor: readyForCall ? 'pointer' : 'not-allowed',
+          }}
+        >
+          Видеоконференция
+        </button>
+
+{incomingCall && (
+  <div
+    style={{
+      position: 'fixed',
+      bottom: 16,
+      left: '50%',
+      transform: 'translateX(-50%)',
+      background: '#fff',
+      boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
+      padding: '8px 12px',
+      borderRadius: 8,
+      display: 'flex',
+      gap: 8,
+      alignItems: 'center',
+      zIndex: 2000,
+    }}
+  >
+    <span style={{ fontSize: 14 }}>
+      На этой доске начата видеоконференция.
+    </span>
+    <button
+      style={{
+        padding: '4px 8px',
+        background: '#1976d2',
+        color: '#fff',
+        border: 'none',
+        borderRadius: 4,
+      }}
+      onClick={() => {
+        if (!activeCall && incomingCall) {
+          setActiveCall(incomingCall);
+        }
+        setIncomingCall(null);
+        startCall();
+      }}
+    >
+      Присоединиться
+    </button>
+    <button
+      style={{
+        padding: '4px 8px',
+        border: '1px solid #ccc',
+        borderRadius: 4,
+        background: '#fff',
+      }}
+      onClick={() => setIncomingCall(null)}
+    >
+      Закрыть
+    </button>
+  </div>
+)}
       </header>
 
-      <div style={{ flex: 1 }}>
+              <div className="board-wrapper" style={{ position: 'relative' }}>
         <BoardCanvas
           boardUuid={board.uuid}
           elements={elements}
@@ -502,8 +848,62 @@ useBoardWs({
           shapeKind={shapeKind}
           setTool={setTool}
           boardCanEdit={boardCanEdit}
+          applyElementChanges={applyElementChanges}
+          addElements={addElements}
+          deleteElements={deleteElements}
+          transformElementOnServer={transformElementOnServer}
         />
       </div>
+
+            {showHistoryControls && (
+              <div
+                style={{
+                  position: 'absolute',
+                  left: 16,
+                  bottom: 16,
+                  display: 'flex',
+                  gap: 8,
+                  zIndex: 10,
+                }}
+              >
+                <button onClick={undo} disabled={!canUndo}>
+                  ←
+                </button>
+                <button onClick={redo} disabled={!canRedo}>
+                  →
+                </button>
+              </div>
+            )}
+
+{inCall && (
+  <div
+    style={{
+      position: 'fixed',
+      right: 0,
+      bottom: 0,
+      width: 400,
+      height: 250,
+      background: 'rgba(0,0,0,0.8)',
+      zIndex: 9999,
+      color: '#fff',
+    }}
+  >
+    <WebRTCRoom
+      localStream={localStream}
+      remoteStreams={remoteStreams}
+      inCall={inCall}
+      cameraEnabled={cameraEnabled}
+      micEnabled={micEnabled}
+      onToggleCamera={toggleCamera}
+      onToggleMic={toggleMic}
+      onLeave={() => {
+        leaveCall();
+        setActiveCall(null);
+        setIncomingCall(null);
+      }}
+    />
+  </div>
+)}
 
 {isMediaDialogOpen && (
   <div

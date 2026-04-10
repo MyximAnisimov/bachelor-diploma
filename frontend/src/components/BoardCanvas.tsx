@@ -17,7 +17,6 @@ type Tool = 'SELECT' | 'HAND' | 'BRUSH' | 'TEXT' | 'STICKER' | 'ARROW';
 interface Props {
   boardUuid: string;
   elements: BoardElementDto[];
-  onElementsChange: Dispatch<SetStateAction<BoardElementDto[]>>;
   tool: Tool;
   setTool: (tool: Tool) => void;
   shapeKind: ShapeKind;
@@ -27,9 +26,26 @@ interface Props {
   clientId: string;
   locks: Record<number, string>;
   remoteCursors: Record<string, { x: number; y: number }>;
-  selectedIds: number[];                           // ←
+  selectedIds: number[];
   setSelectedIds: Dispatch<SetStateAction<number[]>>;
   boardCanEdit: boolean;
+    applyElementChanges: (
+      changes: { id: number; patch: Partial<BoardElementDto> }[],
+      options?: { recordHistory?: boolean },
+    ) => void;
+  addElements: (
+    newElements: BoardElementDto[],
+    options?: { recordHistory?: boolean },
+  ) => void;
+  deleteElements: (
+    ids: number[],
+    options?: { recordHistory?: boolean },
+  ) => void;
+  transformElementOnServer: (
+    boardUuid: string,
+    elementId: number,
+    payload: ReturnType<typeof toUpdatePayload>,
+  ) => Promise<BoardElementDto>;
 }
 
 interface ArrowProperties {
@@ -76,10 +92,46 @@ function getStickerAnchors(el: BoardElementDto) {
   ];
 }
 
+type InfiniteGridProps = {
+  step?: number;
+  extent?: number;
+};
+
+export function InfiniteGrid({ step = 20, extent = 10000 }: InfiniteGridProps) {
+  const lines: JSX.Element[] = [];
+  const from = -extent;
+  const to = extent;
+
+  for (let x = from; x <= to; x += step) {
+    lines.push(
+      <Line
+        key={`v-${x}`}
+        points={[x, from, x, to]}
+        stroke="#ddd"
+        strokeWidth={1}
+        listening={false}
+      />,
+    );
+  }
+
+  for (let y = from; y <= to; y += step) {
+    lines.push(
+      <Line
+        key={`h-${y}`}
+        points={[from, y, to, y]}
+        stroke="#ddd"
+        strokeWidth={1}
+        listening={false}
+      />,
+    );
+  }
+
+  return <Layer listening={false}>{lines}</Layer>;
+}
+
 export const BoardCanvas: React.FC<Props> = ({
   boardUuid,
   elements,
-  onElementsChange,
   brushSize,
   brushColor,
   tool,
@@ -92,6 +144,10 @@ export const BoardCanvas: React.FC<Props> = ({
   setSelectedIds,
   shapeKind,
   boardCanEdit,
+  applyElementChanges,
+  addElements,
+  deleteElements,
+  transformElementOnServer,
 }) => {
   const [selectionRect, setSelectionRect] = useState<SelectionRectState>({
     visible: false,
@@ -139,7 +195,7 @@ useEffect(() => {
   if (!transformer) return;
 
   const nodes: Konva.Node[] = [];
-  selectedIds.forEach((id) => {
+  (selectedIds ?? []).forEach((id) => {
     const node = nodeRefs.current[id];
     if (node) nodes.push(node);
   });
@@ -177,8 +233,8 @@ useEffect(() => {
   const prev = prevSelectedRef.current;
   const curr = selectedIds;
 
-  const added = curr.filter((id) => !prev.includes(id));
-  const removed = prev.filter((id) => !curr.includes(id));
+  const added = (curr ?? []).filter((id) => !(prev ?? []).includes(id));
+  const removed = (prev ?? []).filter((id) => !(curr ?? []).includes(id));
 
   if (added.length > 0) {
     sendLock(boardUuid, added, 'LOCK');
@@ -217,22 +273,27 @@ const [textEditor, setTextEditor] = useState<{
     }
   }, [tool]);
 
-    const handleElementChange = async (updated: BoardElementDto) => {
-         console.log('LOCAL CHANGE', updated);
-      onElementsChange((prev) =>
-        prev.map((el) => (el.id === updated.id ? updated : el)),
-      );
+const handleElementChange = async (updated: BoardElementDto) => {
+  console.log('LOCAL CHANGE', updated);
 
-      try {
-        const saved = await transformElement(boardUuid, updated.id, updated);
-        console.log('saved from backend', saved);
-        onElementsChange((prev) =>
-          prev.map((el) => (el.id === saved.id ? saved : el)),
-        );
-      } catch (err) {
-        console.error('Failed to save element', err);
-      }
-    };
+  applyElementChanges(
+    [{ id: updated.id, patch: updated }],
+    { recordHistory: true },
+  );
+
+  try {
+    console.log('sending PATCH to server...', updated.id);
+    const saved = await transformElementOnServer(boardUuid, updated.id, updated);
+    console.log('PATCH RESPONSE', saved);
+
+    applyElementChanges(
+      [{ id: saved.id, patch: saved }],
+      { recordHistory: false },
+    );
+  } catch (err) {
+    console.error('Failed to save element', err);
+  }
+};
 
 const handleMouseMove = (e: KonvaEventObject<MouseEvent>) => {
   const stage = e.target.getStage();
@@ -250,15 +311,13 @@ const handleMouseMove = (e: KonvaEventObject<MouseEvent>) => {
     const idsToDelete = [...selectedIds];
     setSelectedIds([]);
 
-    onElementsChange((prev) =>
-      prev.filter((el) => !idsToDelete.includes(el.id)),
-    );
+  deleteElements(idsToDelete, { recordHistory: true });
 
-    try {
-      await Promise.all(idsToDelete.map((id) => deleteElement(boardUuid, id)));
-    } catch (e) {
-      console.error('Failed to delete some elements', e);
-    }
+  try {
+    await Promise.all(idsToDelete.map((id) => deleteElement(boardUuid, id)));
+  } catch (e) {
+    console.error('Failed to delete some elements', e);
+  }
   };
 
   const openContextMenuAt = (clientX: number, clientY: number) => {
@@ -451,7 +510,7 @@ const handleBrushMouseUp = async (e: KonvaEventObject<MouseEvent>) => {
         eraser: isEraser,
       },
     });
-// onElementsChange((prev) => [...prev, el]);
+addElements([el], { recordHistory: true });
   } catch (err) {
     console.error('Failed to create brush element', err);
   }
@@ -524,10 +583,6 @@ const handleTextEditorChange: React.ChangeEventHandler<HTMLTextAreaElement> = (e
       color: textEditor.color,
     },
   };
-
-  onElementsChange((prev) =>
-    prev.map((x) => (x.id === updated.id ? updated : x)),
-  );
 };
 
 const createArrowBetweenStickers = async (
@@ -554,6 +609,7 @@ const createArrowBetweenStickers = async (
       },
     });
 
+addElements([el], { recordHistory: true });
     setSelectedIds([el.id]);
   } catch (err) {
     console.error('Failed to create arrow element', err);
@@ -697,6 +753,7 @@ const handleElementClick = (
         });
         created.push(res);
       }
+  addElements([el], { recordHistory: true });
       setSelectedIds(created.map((el) => el.id));
     } catch (e) {
       console.error('Failed to duplicate elements', e);
@@ -714,7 +771,15 @@ const handleDeleteElement = async (id: number) => {
   const el = elements.find(e => e.id === id);
   if (!el) return;
 
-  onElementsChange(prev => prev.filter(e => e.id !== id));
+    applyElementChanges(
+      [
+        {
+          id,
+          patch: { deleted: true } as any,
+        },
+      ],
+      { recordHistory: true },
+    );
 
   try {
     await deleteElement(boardUuid, id);
@@ -794,7 +859,7 @@ const handleEraserDown = (e: KonvaEventObject<MouseEvent>) => {
 
         setTool('SELECT');
 
-//     onElementsChange((prev) => [...prev, el]);
+addElements([el], { recordHistory: true });
         setSelectedIds([el.id]);
         openTextEditorForElement(el);
       }
@@ -814,7 +879,7 @@ const handleEraserDown = (e: KonvaEventObject<MouseEvent>) => {
             color: '#fff59d',
           },
         });
-// onElementsChange((prev) => [...prev, el]);
+    addElements([el], { recordHistory: true });
         setSelectedIds([el.id]);
       }
 
@@ -835,7 +900,7 @@ const handleEraserDown = (e: KonvaEventObject<MouseEvent>) => {
             stroke: '#000000',
           },
         });
-// onElementsChange((prev) => [...prev, el]);
+    addElements([el], { recordHistory: true });
       setSelectedIds([el.id]);
     }
     } catch (err) {
@@ -848,7 +913,8 @@ const handleEraserDown = (e: KonvaEventObject<MouseEvent>) => {
     closeContextMenu();
   };
 
-  const sortedElements = [...elements].sort((a, b) => a.zIndex - b.zIndex);
+const safeElements = elements ?? [];
+const sortedElements = [...safeElements].sort((a, b) => a.zIndex - b.zIndex);
   const canDragElements = tool === 'SELECT';
 
 const SCALE_BY = 1.05;
@@ -992,9 +1058,10 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
       }}
       onWheel={handleStageWheel}
     >
+         <InfiniteGrid step={20} extent={10000} />
 
         <Layer listening={false}>
-          {Object.entries(remoteCursors).map(([id, pos]) => (
+          {Object.entries(remoteCursors ?? {}).map(([id, pos]) => (
             <Group key={id} x={pos.x} y={pos.y}>
               <Circle radius={4} fill="red" />
             </Group>
@@ -1003,8 +1070,10 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
 
         <Layer>
             {sortedElements.map((el) => {
+                const lockOwner = locks?.[el.id];
               const isLockedByOther =
-                locks[el.id] !== undefined && locks[el.id] !== clientId;
+                lockOwner !== undefined && lockOwner !== clientId;
+                const isSelected = (selectedIds ?? []).includes(el.id);
 
               if (el.type === 'SHAPE') {
                 return (
@@ -1012,7 +1081,7 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
                   <ShapeElement
                     key={el.id}
                     element={el}
-                    isSelected={selectedIds.includes(el.id)}
+                    isSelected={isSelected}
                     canDrag={boardCanEdit && tool === 'SELECT' && !isLockedByOther && !el.lockedPosition}
                     onClick={(evt) => handleElementClick(el, evt)}
                     onContextMenu={(evt) => handleElementContextMenu(el, evt)}
@@ -1021,7 +1090,7 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
                       nodeRefs.current[el.id] = node;
                     }}
                   />
-                    {selectedIds.includes(el.id) && (
+                    {isSelected && (
                       <Group
                         x={el.x + el.width / 2}
                         y={el.y - 30}
@@ -1068,7 +1137,7 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
                     <MediaElement
                       key={el.id}
                       element={el}
-                      isSelected={selectedIds.includes(el.id)}
+                      isSelected={isSelected}
                       onClick={(evt) => handleElementClick(el, evt)}
                       onContextMenu={(evt) => handleElementContextMenu(el, evt)}
                       onChange={handleElementChange}
@@ -1091,7 +1160,7 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
                   <BrushElement
                     key={el.id}
                     element={el}
-                    isSelected={selectedIds.includes(el.id)}
+                    isSelected={isSelected}
                     canDrag={canDragElements && !isLockedByOther && tool === 'SELECT'}
                     onClick={(evt) => handleElementClick(el, evt)}
                     onContextMenu={(evt) => handleElementContextMenu(el, evt)}
@@ -1108,7 +1177,7 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
                   <TextElement
                     key={el.id}
                     element={el}
-                    isSelected={selectedIds.includes(el.id)}
+                    isSelected={isSelected}
                     canDrag={canDragElements && !isLockedByOther && tool === 'SELECT'}
                     onClick={(evt) => handleElementClick(el, evt)}
                     onContextMenu={(evt) => handleElementContextMenu(el, evt)}
@@ -1129,7 +1198,7 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
                     isSelected={
                       tool === 'ARROW'
                         ? arrowDraft?.fromId === el.id
-                        : selectedIds.includes(el.id)
+                        : isSelected
                     }
                     canDrag={canDragElements && !isLockedByOther && tool === 'SELECT'}
                     onClick={(evt) => handleElementClick(el, evt)}
@@ -1152,7 +1221,7 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
                     key={el.id}
                     element={el}
                     allElements={elements}
-                    isSelected={selectedIds.includes(el.id)}
+                    isSelected={isSelected}
                     onClick={(evt) => handleElementClick(el, evt)}
                     onContextMenu={(evt) => handleElementContextMenu(el, evt)}
                     onChange={handleElementChange}

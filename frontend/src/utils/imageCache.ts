@@ -1,6 +1,6 @@
 const imageCache = new Map<string, HTMLImageElement>();
 
-export function loadImage(url: string): Promise<HTMLImageElement> {
+export function loadImage(url: string): Promise<HTMLPromiseImageElement> {
   if (imageCache.has(url)) {
     return Promise.resolve(imageCache.get(url)!);
   }
@@ -13,8 +13,6 @@ export function loadImage(url: string): Promise<HTMLImageElement> {
       imageCache.set(url, img);
       resolve(img);
     };
-    img.onerror = (e) => {
-      reject(e);
-    };
+    img.onerror = (e) => reject(e);
   });
 }
