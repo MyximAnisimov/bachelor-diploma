@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo  } from 'react';
 import { useParams } from 'react-router-dom';
 import { getBoard } from '../api/boards';
-import { getBoardElements, createElement } from '../api/elements';
+import { getBoardElements, createElement, updateElement, transformElement } from '../api/elements';
 import { useBoardWs } from '../hooks/useBoardsWs';
 import { clientId } from '../api/clientId';
 import type { BoardDto, BoardElementDto } from '../api/types';
@@ -20,6 +20,15 @@ type ShapeKind =
      | 'TRIANGLE'
      | 'CYLINDER';
 
+  interface ElementsState {
+    [id: number]: ElementDto;
+  }
+
+  interface HistoryEntry {
+    before: ElementsState;
+    after: ElementsState;
+  }
+
 export const BoardPage: React.FC = () => {
 
   const { boardUuid } = useParams<{ boardUuid: string }>();
@@ -37,6 +46,81 @@ export const BoardPage: React.FC = () => {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [isMediaDialogOpen, setIsMediaDialogOpen] = useState(false);
   const { currentUser } = useAuth();
+
+async function syncUndoEntryToServer(entry: HistoryEntry) {
+  const elementsToSave = Object.values(entry.before ?? {});
+
+  await Promise.all(
+    elementsToSave.map((el) =>
+      transformElement(board.uuid, el.id, toUpdatePayload(el)).catch((err) => {
+        console.error('Failed to sync undo element', el.id, err);
+      }),
+    ),
+  );
+}
+
+function undo() {
+  if (!canUndo) return;
+  const entry = history[historyIndex];
+  if (!entry) return;
+
+  setElements((prev) => {
+    const map = new Map(prev.map((e) => [e.id, e]));
+    Object.values(entry.before ?? {}).forEach((el) => {
+      map.set(el.id, el);
+    });
+    return Array.from(map.values());
+  });
+
+  syncUndoEntryToServer(entry);
+
+  setHistoryIndex((idx) => idx - 1);
+}
+
+async function syncRedoEntryToServer(entry: HistoryEntry) {
+  const elementsToSave = Object.values(entry.after ?? {});
+
+  await Promise.all(
+    elementsToSave.map((el) =>
+      transformElement(board.uuid, el.id, toUpdatePayload(el)).catch((err) => {
+        console.error('Failed to sync redo element', el.id, err);
+      }),
+    ),
+  );
+}
+
+function redo() {
+  if (!canRedo) return;
+  const entry = history[historyIndex + 1];
+  if (!entry) return;
+
+  setElements((prev) => {
+    const map = new Map(prev.map((e) => [e.id, e]));
+    Object.values(entry.after ?? {}).forEach((el) => {
+      map.set(el.id, el);
+    });
+    return Array.from(map.values());
+  });
+
+  syncRedoEntryToServer(entry);
+
+  setHistoryIndex((idx) => idx + 1);
+}
+
+function toUpdatePayload(el: BoardElementDto) {
+  return {
+    type: el.type,
+    x: el.x,
+    y: el.y,
+    width: el.width,
+    height: el.height,
+    rotation: el.rotation,
+    zIndex: el.zIndex,
+    groupId: el.groupId ?? undefined,
+    mediaId: el.mediaId ?? undefined,
+    properties: el.properties,
+  };
+}
 
   useEffect(() => {
       console.log('BoardPage mount, boardUuid =', boardUuid);
@@ -59,23 +143,123 @@ export const BoardPage: React.FC = () => {
     })();
   }, [boardUuid]);
 
-  const handleAddRect = async () => {
-    if (!boardUuid) return;
-    const el = await createElement(boardUuid, {
-      type: 'SHAPE',
-      x: 100,
-      y: 100,
-      width: 200,
-      height: 100,
-      rotation: 0,
-      properties: {
-        shapeType: 'RECT',
-        fill: '#ffcc00',
-        stroke: '#333',
-      },
+const handleAddRect = async () => {
+  if (!boardUuid) return;
+  const el = await createElement(boardUuid, {
+    type: 'SHAPE',
+    x: 100,
+    y: 100,
+    width: 200,
+    height: 100,
+    rotation: 0,
+    properties: {
+      shapeType: 'RECT',
+      fill: '#ffcc00',
+      stroke: '#333',
+    },
+  });
+
+  addElements([el], { recordHistory: true });
+};
+
+function applyElementChanges(
+  changes: { id: number; patch: Partial<ElementDto> }[],
+  options?: { recordHistory?: boolean },
+) {
+  setElements((prev) => {
+    const map = new Map(prev.map((e) => [e.id, e]));
+    const before: ElementsState = {};
+    const after: ElementsState = {};
+
+    for (const { id, patch } of changes) {
+      const current = map.get(id);
+      if (!current) continue;
+      before[id] = current;
+      const updated = { ...current, ...patch };
+      map.set(id, updated);
+      after[id] = updated;
+    }
+
+    const next = Array.from(map.values());
+
+    if (options?.recordHistory) {
+      setHistory((prevHistory) => {
+        const trimmed = prevHistory.slice(0, historyIndex + 1);
+
+        const newHistory = [...trimmed, { before, after }];
+
+        setHistoryIndex(newHistory.length - 1);
+
+        return newHistory;
+      });
+    }
+
+    return next;
+  });
+}
+
+function addElements(newElements: ElementDto[], options?: { recordHistory?: boolean }) {
+  setElements(prev => {
+    const before: ElementsState = {};
+    const after: ElementsState = {};
+
+    newElements.forEach(el => {
+      after[el.id] = el;
     });
-    setElements(prev => [...prev, el]);
-  };
+
+    const next = [...prev, ...newElements];
+
+    if (options?.recordHistory) {
+      setHistory(prevHistory => {
+        const trimmed = prevHistory.slice(0, historyIndex + 1);
+        const newHistory = [...trimmed, { before, after }];
+        setHistoryIndex(newHistory.length - 1);
+        return newHistory;
+      });
+    }
+
+    return next;
+  });
+}
+
+function deleteElements(
+  ids: number[],
+  options?: { recordHistory?: boolean },
+) {
+  setElements((prev) => {
+    const before: ElementsState = {};
+    const after: ElementsState = {};
+
+    prev.forEach((el) => {
+      if (ids.includes(el.id)) {
+        before[el.id] = el;
+      }
+    });
+
+    const next = prev.filter((el) => !ids.includes(el.id));
+
+    if (options?.recordHistory && Object.keys(before).length > 0) {
+      setHistory((prevHistory) => {
+        const trimmed = prevHistory.slice(0, historyIndex + 1);
+        const newHistory = [...trimmed, { before, after }];
+        setHistoryIndex(newHistory.length - 1);
+        return newHistory;
+      });
+    }
+
+    return next;
+  });
+}
+
+async function transformElementOnServer(
+  boardUuid: string,
+  elementId: number,
+  el: BoardElementDto,
+): Promise<BoardElementDto> {
+  const payload = toUpdatePayload(el);
+  const saved = await transformElement(boardUuid, elementId, payload);
+  return saved;
+}
 
 const handleUploadMedia = async (file: File) => {
   try {
@@ -134,23 +318,24 @@ useBoardWs({
       return;
     }
 
-    setLocks((prev) => {
-      const copy: Record<number, string> = { ...prev };
+setLocks((prev) => {
+  const copy: Record<number, string> = { ...prev };
+  const ids = elementIds ?? [];
 
-      if (action === 'LOCK') {
-        elementIds.forEach((id: number) => {
-          copy[id] = owner;
-        });
-      } else if (action === 'UNLOCK') {
-        elementIds.forEach((id: number) => {
-          if (copy[id] === owner) {
-            delete copy[id];
-          }
-        });
-      }
-
-      return copy;
+  if (action === 'LOCK') {
+    ids.forEach((id: number) => {
+      copy[id] = owner;
     });
+  } else if (action === 'UNLOCK') {
+    ids.forEach((id: number) => {
+      if (copy[id] === owner) {
+        delete copy[id];
+      }
+    });
+  }
+
+  return copy;
+});
   },
 
   onCursorMessage: (msg) => {
@@ -208,11 +393,19 @@ useBoardWs({
     navigator.clipboard.writeText(link).catch(err => console.error('Copy failed', err));
   };
 
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [historyIndex, setHistoryIndex] = useState<number>(-1);
+  const canUndo = historyIndex >= 0;
+  const canRedo = historyIndex < history.length - 1;
+
+  const showHistoryControls = boardCanEdit;
+
    console.log('BoardPage user/board', { currentUser, ownerId: board?.ownerId });
 
   console.log('RENDER BoardPage', { loading, board });
   if (loading || !board) return <div>Загрузка...</div>;
 
+console.log('HISTORY', historyIndex, history);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <header
@@ -485,7 +678,7 @@ useBoardWs({
         </button>
       </header>
 
-      <div style={{ flex: 1 }}>
+              <div className="board-wrapper" style={{ position: 'relative' }}>
         <BoardCanvas
           boardUuid={board.uuid}
           elements={elements}
@@ -502,8 +695,32 @@ useBoardWs({
           shapeKind={shapeKind}
           setTool={setTool}
           boardCanEdit={boardCanEdit}
+          applyElementChanges={applyElementChanges}
+          addElements={addElements}
+          deleteElements={deleteElements}
+          transformElementOnServer={transformElementOnServer}
         />
       </div>
+
+            {showHistoryControls && (
+              <div
+                style={{
+                  position: 'absolute',
+                  left: 16,
+                  bottom: 16,
+                  display: 'flex',
+                  gap: 8,
+                  zIndex: 10,
+                }}
+              >
+                <button onClick={undo} disabled={!canUndo}>
+                  ←
+                </button>
+                <button onClick={redo} disabled={!canRedo}>
+                  →
+                </button>
+              </div>
+            )}
 
 {isMediaDialogOpen && (
   <div
