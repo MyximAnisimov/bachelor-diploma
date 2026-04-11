@@ -187,3 +187,19 @@ export function sendCursor(boardUuid: string, x: number, y: number) {
     }),
   });
 }
+
+export function handleElementMessage(msg: ElementUpdatedMessage) {
+  const isMine = msg.clientId === myClientId;
+
+  if (msg.action === 'UPSERT') {
+    applyElementChanges(
+      [{ id: msg.element.id, patch: msg.element }],
+      { recordHistory: isMine },
+    );
+  } else if (msg.action === 'DELETE') {
+    applyElementChanges(
+      [{ id: msg.element.id, patch: { deleted: true } as any }],
+      { recordHistory: isMine },
+    );
+  }
+}
