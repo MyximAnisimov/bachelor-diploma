@@ -51,6 +51,7 @@ export function useBoardWebRTC(boardUuid: string | undefined) {
   const sendRtcRef = useRef<(msg: RtcSignalMessage) => void>(() => {});
   const joinedRef = useRef(false);
   const participantsRef = useRef<Set<string>>(new Set());
+  const [mediaError, setMediaError] = useState<string | null>(null);
 
   function sendRtc(msg: RtcSignalMessage) {
     sendRtcRef.current?.(msg);
@@ -62,6 +63,15 @@ export function useBoardWebRTC(boardUuid: string | undefined) {
     let cancelled = false;
 
     async function initMedia() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        console.error('mediaDevices.getUserMedia is not supported in this browser');
+        setMediaError(
+          'Ваш браузер не поддерживает доступ к камере и микрофону. ' +
+          'Используйте современный браузер (Chrome, Firefox, Edge).'
+        );
+        return;
+      }
+
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: true,
@@ -72,8 +82,14 @@ export function useBoardWebRTC(boardUuid: string | undefined) {
           return;
         }
         setLocalStream(stream);
-      } catch (e) {
+        setMediaError(null);
+      } catch (e: any) {
         console.error('getUserMedia error', e);
+        setMediaError(
+          e?.name === 'NotAllowedError'
+            ? 'Доступ к камере/микрофону запрещён. Разрешите его в настройках браузера.'
+            : 'Ошибка при доступе к камере/микрофону: ' + e?.name
+        );
       }
     }
 
@@ -291,5 +307,6 @@ export function useBoardWebRTC(boardUuid: string | undefined) {
     micEnabled,
     toggleCamera,
     toggleMic,
+    mediaError,
   };
 }

@@ -59,6 +59,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.DELETE, "/api/boards/*/elements/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/boards").authenticated()
                         .requestMatchers("/uploads/**").permitAll()
+                        .requestMatchers("/api/ai/**").permitAll() //поправить потом
 
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/ws/**").permitAll()

@@ -6,11 +6,13 @@ import { useBoardWs } from '../hooks/useBoardsWs';
 import { clientId } from '../api/clientId';
 import type { BoardDto, BoardElementDto } from '../api/types';
 import { BoardCanvas } from './BoardCanvas';
+import { AiChatDialog } from './AiChatDialog';
 import { uploadFile } from '../api/files';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/http';
 import { useBoardWebRTC } from '../webrtc/useBoardWebRtc';
 import { WebRTCRoom } from '../webrtc/WebRTCRoom';
+import { fetchAssistants } from '../api/ai';
 
 type Tool = 'SELECT' | 'HAND' | 'BRUSH' | 'TEXT' | 'STICKER' | 'ARROW' | 'MEDIA';
 
@@ -68,6 +70,11 @@ export const BoardPage: React.FC = () => {
   const sendRtcRef = useRef<(msg: RtcSignalMessage) => void>(() => {});
   const sendCallRef = useRef<(msg: CallSignalMessage) => void>(() => {});
 
+  const [aiMenuOpen, setAiMenuOpen] = useState(false);
+  const [assistants, setAssistants] = useState<AiAssistant[]>([]);
+  const [selectedAssistant, setSelectedAssistant] = useState<AiAssistant | null>(null);
+  const [aiChatOpen, setAiChatOpen] = useState(false);
+
   const {
     localStream,
     remoteStreams,
@@ -78,9 +85,10 @@ export const BoardPage: React.FC = () => {
     micEnabled,
     toggleCamera,
     toggleMic,
+    mediaError,
   } = useBoardWebRTC(board?.uuid);
 
-const readyForCall = !!board && !!localStream;
+const readyForCall = !!board && !mediaError;
 
 async function syncUndoEntryToServer(entry: HistoryEntry) {
   const elementsToSave = Object.values(entry.before ?? {});
@@ -93,6 +101,17 @@ async function syncUndoEntryToServer(entry: HistoryEntry) {
     ),
   );
 }
+
+useEffect(() => {
+  fetchAssistants()
+    .then((data) => {
+      console.log('assistants from backend', data);
+      setAssistants(data);
+    })
+    .catch((e) => {
+      console.error('Failed to load AI assistants', e);
+    });
+}, []);
 
 function undo() {
   if (!canUndo) return;
@@ -777,6 +796,72 @@ console.log('HISTORY', historyIndex, history);
         >
           Видеоконференция
         </button>
+
+        <button
+          type="button"
+          onClick={() => setAiChatOpen(prev => !prev)}
+          style={{
+            padding: '4px 8px',
+            marginLeft: 8,
+          }}
+        >
+          ИИ‑ассистент
+        </button>
+
+        {aiMenuOpen && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 48,
+              right: 16,
+              background: '#fff',
+              border: '1px solid #ccc',
+              borderRadius: 4,
+              padding: 8,
+              zIndex: 1000,
+              minWidth: 260,
+            }}
+          >
+            <div style={{ fontWeight: 'bold', marginBottom: 4 }}>
+              Выберите ИИ‑ассистента
+            </div>
+            {assistants.map((a) => (
+              <div
+                key={a.id}
+                onClick={() => {
+                  if (!a.available) return;
+                  setSelectedAssistant(a);
+                  setAiChatOpen(true);
+                  setAiMenuOpen(false);
+                }}
+                style={{
+                  padding: '4px 8px',
+                  cursor: a.available ? 'pointer' : 'not-allowed',
+                  opacity: a.available ? 1 : 0.5,
+                }}
+              >
+                <div>
+                  {a.name} {a.local && ' (локально)'}
+                </div>
+                <div style={{ fontSize: 12, color: '#666' }}>
+                  {a.description}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+    {aiChatOpen && board && (
+      <AiChatDialog
+        boardUuid={board.uuid}
+        assistants={assistants}
+        initialAssistant={selectedAssistant}
+        context={{
+          selectedElements: elements.filter(el => selectedIds.includes(el.id)),
+          boardTitle: board.title,
+        }}
+        onClose={() => setAiChatOpen(false)}
+      />
+    )}
 
 {incomingCall && (
   <div
