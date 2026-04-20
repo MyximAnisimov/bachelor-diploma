@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.UUID;
 
 public interface BoardService {
-    List<BoardDto> getBoardsForCurrentUser();
+//    List<BoardDto> getBoardsForCurrentUser();
     BoardDto createBoard(CreateBoardRequest request);
     BoardDto getBoard(UUID boardUuid);
     BoardDto updateBoard(UUID boardUuid, UpdateBoardRequest request);
@@ -19,4 +19,5 @@ public interface BoardService {
     BoardDto createTemporaryBoard(String title);
     BoardDto updateAccessMode(UUID boardUuid, BoardAccessMode mode);
     boolean canEdit(Board board, User currentUserOrNull);
+    List<BoardDto> listBoardsForCurrentUser(String sortBy, String order);
 }

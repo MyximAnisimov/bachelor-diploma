@@ -38,14 +38,14 @@ public class QwenLocalClient implements AiProviderClient {
 
     @Override
     public AiChatResponse chat(AiChatRequest request) {
-        String url = props.getUrl();
-        if (url == null || url.isBlank()) {
-            throw new IllegalStateException("Qwen local URL is not configured (ai.providers.local-qwen.url)");
+        String baseUrl = props.getUrl();
+        if (baseUrl == null || baseUrl.isBlank()) {
+            throw new IllegalStateException("Qwen base URL is not configured (ai.providers.qwen-local.url)");
         }
 
-        String model = props.getModel() != null && !props.getModel().isBlank()
+        String model = (props.getModel() != null && !props.getModel().isBlank())
                 ? props.getModel()
-                : "qwen";
+                : "qwen2:4b";
 
         Map<String, Object> body = Map.of(
                 "model", model,
@@ -54,7 +54,8 @@ public class QwenLocalClient implements AiProviderClient {
                                 "role", "user",
                                 "content", request.getMessage()
                         )
-                )
+                ),
+                "stream", false
         );
 
         HttpHeaders headers = new HttpHeaders();
@@ -62,23 +63,23 @@ public class QwenLocalClient implements AiProviderClient {
 
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
 
-        Map<String, Object> resp = restTemplate.postForObject(url, entity, Map.class);
+        String url = baseUrl.endsWith("/")
+                ? baseUrl + "api/chat"
+                : baseUrl + "/api/chat";
 
+        Map<String, Object> resp = restTemplate.postForObject(url, entity, Map.class);
         if (resp == null) {
             throw new IllegalStateException("Empty response from Qwen local service");
         }
 
-        List<Object> choices = (List<Object>) resp.get("choices");
-        if (choices == null || choices.isEmpty()) {
-            throw new IllegalStateException("No choices in Qwen response: " + resp);
+        Map<String, Object> msg = (Map<String, Object>) resp.get("message");
+        if (msg == null) {
+            throw new IllegalStateException("No 'message' in Qwen response: " + resp);
         }
 
-        Map<String, Object> firstChoice = (Map<String, Object>) choices.get(0);
-        Map<String, Object> message = (Map<String, Object>) firstChoice.get("message");
-        String content = message != null ? (String) message.get("content") : null;
-
+        String content = (String) msg.get("content");
         if (content == null) {
-            throw new IllegalStateException("No content in Qwen response: " + resp);
+            throw new IllegalStateException("No 'content' in Qwen response: " + resp);
         }
 
         AiChatResponse r = new AiChatResponse();

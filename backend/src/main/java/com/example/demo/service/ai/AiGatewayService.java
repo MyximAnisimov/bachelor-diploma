@@ -16,9 +16,7 @@ public class AiGatewayService {
 
     public AiGatewayService(AiProperties aiProperties) {
         this.aiProperties = aiProperties;
-
         Map<String, AiProperties.ProviderProps> p = aiProperties.getProviders();
-
         if (p.containsKey("chatgpt")) {
             clients.put("chatgpt", new ChatGptClient(p.get("chatgpt")));
         }
@@ -28,8 +26,8 @@ public class AiGatewayService {
         if (p.containsKey("ds")) {
             // clients.put("ds", new DsClient(p.get("ds")));
         }
-        if (p.containsKey("local-qwen")) {
-            clients.put("local-qwen", new QwenLocalClient(p.get("local-qwen")));
+        if (p.containsKey("qwen-local")) {
+            clients.put("qwen-local", new QwenLocalClient(p.get("qwen-local")));
         }
     }
 

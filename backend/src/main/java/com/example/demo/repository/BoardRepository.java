@@ -1,6 +1,7 @@
 package com.example.demo.repository;
 
 import com.example.demo.model.Board;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
@@ -11,5 +12,5 @@ public interface BoardRepository extends JpaRepository<Board, Long> {
 
     Optional<Board> findByUuid(UUID uuid);
 
-    List<Board> findAllByOwnerId(Long ownerId);
+    List<Board> findAllByOwnerId(Long ownerId, Sort sort);
 }

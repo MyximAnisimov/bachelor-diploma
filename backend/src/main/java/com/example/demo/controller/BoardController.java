@@ -22,6 +22,14 @@ public class BoardController {
 
     private final BoardService boardService;
 
+    @GetMapping("/my")
+    public List<BoardDto> myBoards(
+            @RequestParam(defaultValue = "createdAt") String sortBy,
+            @RequestParam(defaultValue = "desc") String order
+    ) {
+        return boardService.listBoardsForCurrentUser(sortBy, order);
+    }
+
     @PostMapping("/temporary")
     public BoardDto createTemporaryBoard(@RequestParam(required = false) String title) {
         return boardService.createTemporaryBoard(title);
@@ -30,12 +38,6 @@ public class BoardController {
     @GetMapping("/public/{boardUuid}")
     public BoardDto getTemporaryBoard(@PathVariable UUID boardUuid) {
         return boardService.getBoard(boardUuid);
-    }
-
-    @GetMapping
-    public List<BoardDto> getMyBoards() {
-        log.info("BoardController.getMyBoards called");
-        return boardService.getBoardsForCurrentUser();
     }
 
     @PostMapping

@@ -9,6 +9,7 @@ import com.example.demo.model.User;
 import com.example.demo.repository.BoardRepository;
 import com.example.demo.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
@@ -123,22 +124,32 @@ public class BoardServiceImpl implements BoardService {
         return toDto(saved);
     }
 
-    public List<BoardDto> getBoardsForCurrentUser() {
-        User currentUser = getCurrentUser();
-        List<Board> boards = boardRepository.findAllByOwnerId(currentUser.getId());
-        return boards.stream().map(this::toDto).toList();
-    }
+//    public List<BoardDto> getBoardsForCurrentUser() {
+//        User currentUser = getCurrentUser();
+//        List<Board> boards = boardRepository.findAllByOwnerId(currentUser.getId());
+//        return boards.stream().map(this::toDto).toList();
+//    }
 
     @Override
     public BoardDto createBoard(CreateBoardRequest request) {
-        User currentUser = getCurrentUser();
+        User currentUser = getCurrentUserOrNull();  // может вернуть null
+
         Board board = new Board();
         board.setUuid(UUID.randomUUID());
         board.setTitle(request.getTitle() != null && !request.getTitle().isBlank()
                 ? request.getTitle()
-                : "Новая доска");
-        board.setOwner(currentUser);
-        board.setAccessMode(BoardAccessMode.PRIVATE);
+                : (currentUser != null ? "Новая доска" : "Временная доска"));
+
+        if (currentUser != null) {
+            board.setOwner(currentUser);
+            board.setTemporary(false);
+            board.setAccessMode(BoardAccessMode.PRIVATE);
+        } else {
+            board.setOwner(null);
+            board.setTemporary(true);
+            board.setAccessMode(BoardAccessMode.LINK_EDIT);
+        }
+
         Board saved = boardRepository.save(board);
         return toDto(saved);
     }
@@ -186,5 +197,24 @@ public class BoardServiceImpl implements BoardService {
         board.setAccessMode(BoardAccessMode.LINK_EDIT);
         Board saved = boardRepository.save(board);
         return toDto(saved);
+    }
+
+    @Override
+    public List<BoardDto> listBoardsForCurrentUser(String sortBy, String order) {
+        User currentUser = getCurrentUser();
+        Sort sort;
+        if ("title".equalsIgnoreCase(sortBy)) {
+            sort = Sort.by("title");
+        } else {
+            sort = Sort.by("createdAt");
+        }
+        if ("desc".equalsIgnoreCase(order)) {
+            sort = sort.descending();
+        } else {
+            sort = sort.ascending();
+        }
+
+        List<Board> boards = boardRepository.findAllByOwnerId(currentUser.getId(), sort);
+        return boards.stream().map(this::toDto).toList();
     }
 }

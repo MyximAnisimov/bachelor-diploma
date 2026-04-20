@@ -14,7 +14,7 @@ export const AuthPage: React.FC = () => {
 
   const handleCreatePublicBoard = async () => {
     try {
-      const resp = await api.post('/api/boards/public', {
+      const resp = await api.post('/api/boards', {
         title: publicTitle || undefined,
       });
       const uuid = resp.data.uuid;
@@ -26,8 +26,24 @@ export const AuthPage: React.FC = () => {
   };
 
   const handleJoinBoard = () => {
-    if (!joinUuid.trim()) return;
-    navigate(`/boards/${joinUuid.trim()}`);
+    const raw = joinUuid.trim();
+    if (!raw) return;
+
+    const uuidMatch = raw.match(
+      /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i
+    );
+
+    const uuid = uuidMatch ? uuidMatch[0] : raw;
+
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      uuid
+    );
+    if (!isUuid) {
+      alert('Введите корректный UUID или ссылку на доску');
+      return;
+    }
+
+    navigate(`/boards/${uuid}`);
   };
 
   return (

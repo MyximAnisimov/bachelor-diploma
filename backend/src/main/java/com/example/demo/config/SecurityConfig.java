@@ -58,12 +58,13 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.PATCH, "/api/boards/*/elements/**").permitAll()
                         .requestMatchers(HttpMethod.DELETE, "/api/boards/*/elements/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/boards").authenticated()
-                        .requestMatchers("/uploads/**").permitAll()
-                        .requestMatchers("/api/ai/**").permitAll() //поправить потом
+                        .requestMatchers(HttpMethod.POST, "/api/boards").permitAll()
 
+                        .requestMatchers("/uploads/**").permitAll()
+                        .requestMatchers("/api/ai/**").permitAll()
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/ws/**").permitAll()
-
+                        .requestMatchers(HttpMethod.GET, "/api/boards/my").authenticated()
                         .anyRequest().authenticated()
                 )
                 .oauth2Login(oauth -> oauth

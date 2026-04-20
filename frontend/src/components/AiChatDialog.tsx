@@ -91,6 +91,7 @@ const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
         zIndex: 1100,
         overflow: 'hidden',
         border: '1px solid #ddd',
+        color: '#000', // базовый цвет текста
       }}
     >
       <div
@@ -112,6 +113,7 @@ const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
             fontSize: 18,
             lineHeight: 1,
             cursor: 'pointer',
+            color: '#000',
           }}
         >
           ×
@@ -187,6 +189,7 @@ const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
                 borderRadius: 8,
                 background: m.role === 'user' ? '#dbeafe' : '#e5e7eb',
                 fontSize: 13,
+                color: '#000',
               }}
             >
               {m.content}
@@ -207,7 +210,6 @@ const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
         )}
       </div>
 
-      {/* Нижнее поле ввода */}
       <div
         style={{
           padding: '8px 10px',
@@ -238,6 +240,7 @@ const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
               outline: 'none',
               fontSize: 13,
               background: 'transparent',
+              color: '#000',
             }}
             disabled={!selectedAssistant || loading}
           />
