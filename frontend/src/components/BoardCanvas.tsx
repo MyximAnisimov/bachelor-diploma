@@ -46,6 +46,7 @@ interface Props {
     elementId: number,
     payload: ReturnType<typeof toUpdatePayload>,
   ) => Promise<BoardElementDto>;
+displayName: string;
 }
 
 interface ArrowProperties {
@@ -74,6 +75,12 @@ interface ContextMenuState {
   x: number;
   y: number;
 }
+
+type RemoteCursor = {
+  x: number;
+  y: number;
+  name?: string;
+};
 
 function getStickerAnchors(el: BoardElementDto) {
   const w = el.width;
@@ -148,6 +155,7 @@ export const BoardCanvas: React.FC<Props> = ({
   addElements,
   deleteElements,
   transformElementOnServer,
+  displayName,
 }) => {
   const [selectionRect, setSelectionRect] = useState<SelectionRectState>({
     visible: false,
@@ -182,6 +190,8 @@ const [shapeColorPicker, setShapeColorPicker] = useState<{
 
 const [freeArrowStart, setFreeArrowStart] = useState<{ x: number; y: number } | null>(null);
 const [freeArrowEnd, setFreeArrowEnd] = useState<{ x: number; y: number } | null>(null);
+
+    const [needName, setNeedName] = useState(!displayName);
 
 
 
@@ -304,7 +314,7 @@ const handleMouseMove = (e: KonvaEventObject<MouseEvent>) => {
   const logicalX = (pointerPos.x - stagePos.x) / stageScale;
   const logicalY = (pointerPos.y - stagePos.y) / stageScale;
 
-  sendCursor(boardUuid, logicalX, logicalY);
+  sendCursor(boardUuid, logicalX, logicalY, displayName);
 };
 
   const handleDeleteSelected = async () => {
@@ -1061,11 +1071,13 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
          <InfiniteGrid step={20} extent={10000} />
 
         <Layer listening={false}>
-          {Object.entries(remoteCursors ?? {}).map(([id, pos]) => (
-            <Group key={id} x={pos.x} y={pos.y}>
-              <Circle radius={4} fill="red" />
-            </Group>
-          ))}
+          {Object.entries(remoteCursors ?? {})
+            .filter(([id]) => id !== clientId)
+            .map(([id, pos]) => (
+              <Group key={id} x={pos.x} y={pos.y}>
+                <Circle radius={4} fill="red" />
+              </Group>
+            ))}
         </Layer>
 
         <Layer>
@@ -1261,6 +1273,38 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
           )}
         </Layer>
       </Stage>
+
+{Object.entries(remoteCursors)
+  .filter(([id]) => id !== clientId)
+  .map(([id, cursor]) => (
+    <div
+      key={id}
+      style={{
+        position: 'absolute',
+        left: cursor.x * stageScale + stagePos.x,
+        top: cursor.y * stageScale + stagePos.y,
+        pointerEvents: 'none',
+        transform: 'translate(-50%, -50%)',
+      }}
+    >
+      <div>▸</div>
+      {cursor.displayName && (
+        <div
+          style={{
+            marginTop: 2,
+            padding: '2px 4px',
+            background: 'rgba(0,0,0,0.7)',
+            color: '#fff',
+            borderRadius: 4,
+            fontSize: 12,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {cursor.displayName}
+        </div>
+      )}
+    </div>
+  ))}
 
       {contextMenu.visible && selectedIds.length > 0 && (
         <div

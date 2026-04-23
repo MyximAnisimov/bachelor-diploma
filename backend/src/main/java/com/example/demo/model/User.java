@@ -20,7 +20,7 @@ public class User {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, unique = true)
+    @Column(unique = true)
     private String externalId;
 
     @Enumerated(EnumType.STRING)
@@ -30,14 +30,14 @@ public class User {
     @Column(nullable = false)
     private String displayName;
 
+    @Column(unique = true)
     private String email;
 
-    @Column(name = "password_hash", nullable = false)
+    @Column(name = "password_hash")
     private String passwordHash;
 
     private String avatarUrl;
 
     @Column(nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
-
 }

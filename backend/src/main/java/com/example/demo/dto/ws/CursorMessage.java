@@ -10,4 +10,5 @@ public class CursorMessage {
     private String clientId;
     private double x;
     private double y;
+    private String displayName;
 }

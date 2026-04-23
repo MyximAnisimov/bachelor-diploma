@@ -173,7 +173,7 @@ export function sendLock(
   });
 }
 
-export function sendCursor(boardUuid: string, x: number, y: number) {
+export function sendCursor(boardUuid: string, x: number, y: number, displayName?: string,) {
   if (!stompClient || !stompClient.connected) {
     return;
   }
@@ -184,6 +184,7 @@ export function sendCursor(boardUuid: string, x: number, y: number) {
       clientId,
       x,
       y,
+      displayName,
     }),
   });
 }

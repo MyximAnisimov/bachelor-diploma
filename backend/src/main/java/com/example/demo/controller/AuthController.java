@@ -47,10 +47,8 @@ public class AuthController {
         user.setDisplayName(req.getName() != null ? req.getName() : req.getEmail());
         user.setExternalId(null);
         userRepository.save(user);
-        userRepository.save(user);
 
         String token = jwtService.generateToken(user);
-
         return ResponseEntity.ok(Map.of(
                 "token", token,
                 "user", Map.of(
@@ -65,13 +63,10 @@ public class AuthController {
     public ResponseEntity<?> login(@RequestBody LoginRequest req) {
         User user = userRepository.findByEmail(req.getEmail())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials"));
-
         if (!passwordEncoder.matches(req.getPassword(), user.getPasswordHash())) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
         }
-
         String token = jwtService.generateToken(user);
-
         return ResponseEntity.ok(Map.of(
                 "token", token,
                 "user", Map.of(

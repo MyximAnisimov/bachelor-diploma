@@ -382,7 +382,40 @@ const handleUploadMedia = async (file: File) => {
 };
 
   const [locks, setLocks] = useState<Record<number, string>>({});
-  const [remoteCursors, setRemoteCursors] = useState<Record<string, { x: number; y: number }>>({});
+  const [remoteCursors, setRemoteCursors] = useState<
+    Record<string, { x: number; y: number; displayName?: string }>
+  >({});
+
+  const [displayName, setDisplayName] = useState(
+    localStorage.getItem('displayName') || ''
+  );
+
+  const [needName, setNeedName] = useState(!displayName && !currentUser);
+
+  useEffect(() => {
+    if (currentUser) {
+      const nameFromAccount =
+        (currentUser.fullName as string | undefined) ||
+        (currentUser.name as string | undefined) ||
+        (currentUser.email as string | undefined) ||
+        '';
+      if (nameFromAccount) {
+        setDisplayName(nameFromAccount);
+        localStorage.setItem('displayName', nameFromAccount);
+        setNeedName(false);
+      }
+    } else if (!displayName) {
+      setNeedName(true);
+    }
+  }, [currentUser]);
+
+  const handleSaveName = () => {
+    const trimmed = displayName.trim();
+    if (!trimmed) return;
+    localStorage.setItem('displayName', trimmed);
+    setDisplayName(trimmed);
+    setNeedName(false);
+  };
 
 useBoardWs({
   boardUuid,
@@ -421,11 +454,10 @@ useBoardWs({
   },
 
   onCursorMessage: (msg) => {
-    const { clientId: sender, x, y } = msg;
-    if (sender === clientId) return;
+    const { clientId, x, y, displayName } = msg;
     setRemoteCursors((prev) => ({
       ...prev,
-      [sender]: { x, y },
+      [clientId]: { x, y, displayName },
     }));
   },
 
@@ -863,6 +895,52 @@ console.log('HISTORY', historyIndex, history);
       />
     )}
 
+{needName && (
+  <div
+    style={{
+      position: 'fixed',
+      inset: 0,
+      background: 'rgba(0,0,0,0.4)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 9999,
+    }}
+  >
+    <div
+      style={{
+        background: '#fff',
+        padding: '16px 24px',
+        borderRadius: 8,
+        minWidth: 280,
+        boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <h3 style={{ marginTop: 0, marginBottom: 8 }}>Представьтесь</h3>
+      <p style={{ marginTop: 0, marginBottom: 12 }}>
+        Как вас называть на доске?
+      </p>
+      <input
+        autoFocus
+        type="text"
+        value={displayName}
+        onChange={(e) => setDisplayName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') handleSaveName();
+        }}
+        style={{
+          width: '100%',
+          padding: '8px',
+          marginBottom: 12,
+          boxSizing: 'border-box',
+        }}
+      />
+      <button onClick={handleSaveName}>Сохранить</button>
+    </div>
+  </div>
+)}
+
 {incomingCall && (
   <div
     style={{
@@ -937,6 +1015,7 @@ console.log('HISTORY', historyIndex, history);
           addElements={addElements}
           deleteElements={deleteElements}
           transformElementOnServer={transformElementOnServer}
+          displayName={displayName}
         />
       </div>
 
