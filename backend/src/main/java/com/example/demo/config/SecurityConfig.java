@@ -57,9 +57,11 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/boards/*/elements").permitAll()
                         .requestMatchers(HttpMethod.PATCH, "/api/boards/*/elements/**").permitAll()
                         .requestMatchers(HttpMethod.DELETE, "/api/boards/*/elements/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/boards/*/versions").authenticated()
+                        .requestMatchers(HttpMethod.POST, "/api/boards/*/versions").authenticated()
+                        .requestMatchers(HttpMethod.POST, "/api/boards/*/versions/*/restore").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/boards").authenticated()
                         .requestMatchers(HttpMethod.POST, "/api/boards").permitAll()
-
                         .requestMatchers("/uploads/**").permitAll()
                         .requestMatchers("/api/ai/**").permitAll()
                         .requestMatchers("/api/auth/**").permitAll()
