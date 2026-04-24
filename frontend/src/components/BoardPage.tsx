@@ -14,7 +14,7 @@ import { useBoardWebRTC } from '../webrtc/useBoardWebRtc';
 import { WebRTCRoom } from '../webrtc/WebRTCRoom';
 import { fetchAssistants } from '../api/ai';
 
-type Tool = 'SELECT' | 'HAND' | 'BRUSH' | 'TEXT' | 'STICKER' | 'ARROW' | 'MEDIA';
+type Tool = 'SELECT' | 'HAND' | 'BRUSH' | 'TEXT' | 'STICKER' | 'ARROW' | 'MEDIA' | 'EXPORT';
 
 type ActiveCall = {
   id: string;
@@ -344,6 +344,68 @@ async function transformElementOnServer(
   const saved = await transformElement(boardUuid, elementId, payload);
   return saved;
 }
+
+const handleExportBoardFile = () => {
+  if (!board) return;
+  const snapshot: BoardSnapshot = {
+    version: 1,
+    board: {
+      uuid: board.uuid,
+      title: board.title,
+      createdAt: board.createdAt,
+    },
+    elements,
+  };
+
+  const json = JSON.stringify(snapshot, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${board.title || 'board'}.board.json`;
+  link.click();
+
+  URL.revokeObjectURL(url);
+};
+
+const exportCrop = (format: 'png' | 'jpeg' | 'webp' = 'png') => {
+  if (!stageRef.current || !cropRect) return;
+
+  // Нормализуем ширину/высоту, чтобы не было отрицательных значений,
+  // если пользователь тянул "вверх-влево"
+  const x = Math.min(cropRect.x, cropRect.x + cropRect.width);
+  const y = Math.min(cropRect.y, cropRect.y + cropRect.height);
+  const width = Math.abs(cropRect.width);
+  const height = Math.abs(cropRect.height);
+
+  if (width < 5 || height < 5) {
+    // слишком маленький фрагмент – игнорируем
+    return;
+  }
+
+  const mimeType =
+    format === 'jpeg'
+      ? 'image/jpeg'
+      : format === 'webp'
+      ? 'image/webp'
+      : 'image/png';
+
+  const dataUrl = stageRef.current.toDataURL({
+    x,
+    y,
+    width,
+    height,
+    mimeType,
+    quality: 1,      // можно уменьшить для jpeg/webp
+    pixelRatio: 2,   // увеличивает реальное разрешение
+  });
+
+  const link = document.createElement('a');
+  link.href = dataUrl;
+  link.download = `board-fragment.${format}`;
+  link.click();
+};
 
 const handleUploadMedia = async (file: File) => {
   try {
@@ -838,6 +900,25 @@ console.log('HISTORY', historyIndex, history);
           }}
         >
           ИИ‑ассистент
+        </button>
+
+        <button
+          onClick={() => setTool('EXPORT')}
+          style={{
+            padding: '4px 8px',
+            background: tool === 'EXPORT' ? '#1976d2' : '#eee',
+            color: tool === 'EXPORT' ? '#fff' : '#000',
+          }}
+        >
+          Экспорт фрагмента
+        </button>
+
+        <button
+          type="button"
+          onClick={handleExportBoardFile}
+          style={{ padding: '4px 8px', marginLeft: 8 }}
+        >
+          Экспорт доски в файл
         </button>
 
         {aiMenuOpen && (

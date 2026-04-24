@@ -12,7 +12,7 @@ import { StickerElement } from '../elements/StickerElement';
 import { ArrowElement } from '../elements/ArrowElement';
 import { MediaElement } from '../elements/MediaElement';
 
-type Tool = 'SELECT' | 'HAND' | 'BRUSH' | 'TEXT' | 'STICKER' | 'ARROW';
+type Tool = 'SELECT' | 'HAND' | 'BRUSH' | 'TEXT' | 'STICKER' | 'ARROW' | 'EXPORT';
 
 interface Props {
   boardUuid: string;
@@ -81,6 +81,8 @@ type RemoteCursor = {
   y: number;
   name?: string;
 };
+
+type ExportFormat = 'png' | 'jpeg' | 'webp';
 
 function getStickerAnchors(el: BoardElementDto) {
   const w = el.width;
@@ -200,6 +202,9 @@ const [freeArrowEnd, setFreeArrowEnd] = useState<{ x: number; y: number } | null
 
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
 
+const [hideDuringExport, setHideDuringExport] = useState(false);
+const [exportBackgroundColor, setExportBackgroundColor] = useState<string | null>(null);
+
 useEffect(() => {
   const transformer = transformerRef.current;
   if (!transformer) return;
@@ -306,6 +311,23 @@ const handleElementChange = async (updated: BoardElementDto) => {
 };
 
 const handleMouseMove = (e: KonvaEventObject<MouseEvent>) => {
+      if (tool === 'EXPORT' && isDrawingCrop && cropRect) {
+        const stage = e.target.getStage();
+        if (!stage) return;
+        const pos = stage.getPointerPosition();
+        if (!pos) return;
+
+        const logicalX = (pos.x - stagePos.x) / stageScale;
+        const logicalY = (pos.y - stagePos.y) / stageScale;
+
+        setCropRect({
+          x: cropRect.x,
+          y: cropRect.y,
+          width: logicalX - cropRect.x,
+          height: logicalY - cropRect.y,
+        });
+        return;
+      }
   const stage = e.target.getStage();
   if (!stage) return;
   const pointerPos = stage.getPointerPosition();
@@ -315,6 +337,12 @@ const handleMouseMove = (e: KonvaEventObject<MouseEvent>) => {
   const logicalY = (pointerPos.y - stagePos.y) / stageScale;
 
   sendCursor(boardUuid, logicalX, logicalY, displayName);
+};
+
+const handleMouseUp = () => {
+  if (tool === 'EXPORT' && isDrawingCrop) {
+    setIsDrawingCrop(false);
+  }
 };
 
   const handleDeleteSelected = async () => {
@@ -353,6 +381,51 @@ const handleMouseMove = (e: KonvaEventObject<MouseEvent>) => {
       y: (pos.y - stagePos.y) / stageScale,
     };
   };
+
+const exportCrop = async (format: 'png' | 'jpeg' | 'webp' = 'png') => {
+  if (!stageRef.current || !cropRect) return;
+
+  const x = Math.min(cropRect.x, cropRect.x + cropRect.width);
+  const y = Math.min(cropRect.y, cropRect.y + cropRect.height);
+  const width = Math.abs(cropRect.width);
+  const height = Math.abs(cropRect.height);
+
+  if (width < 5 || height < 5) return;
+
+  const backgroundColor = format === 'png' ? null : '#ffffff';
+
+  const mimeType =
+    format === 'jpeg'
+      ? 'image/jpeg'
+      : format === 'webp'
+      ? 'image/webp'
+      : 'image/png';
+
+  try {
+    setHideDuringExport(true);
+    setExportBackgroundColor(backgroundColor);
+
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+
+    const dataUrl = stageRef.current.toDataURL({
+      x,
+      y,
+      width,
+      height,
+      mimeType,
+      quality: 1,
+      pixelRatio: 2,
+    });
+
+    const link = document.createElement('a');
+    link.href = dataUrl;
+    link.download = `board-fragment.${format}`;
+    link.click();
+  } finally {
+    setHideDuringExport(false);
+    setExportBackgroundColor(null);
+  }
+};
 
 const handleStageMouseDown = (e: KonvaEventObject<MouseEvent>) => {
   if (textEditor) {
@@ -772,6 +845,14 @@ const handleElementClick = (
     }
   };
 
+const [cropRect, setCropRect] = useState<{
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+} | null>(null);
+const [isDrawingCrop, setIsDrawingCrop] = useState(false);
+
 const openShapeColorMenu = (elementId: number, mode: 'fill' | 'stroke') => {
   console.log('openShapeColorMenu', elementId, mode);
   setShapeColorPicker({ elementId, mode });
@@ -836,6 +917,8 @@ const handleEraserDown = (e: KonvaEventObject<MouseEvent>) => {
     handleDeleteElement(id);
   }
 };
+
+const stageRef = useRef<Konva.Stage | null>(null);
 
   const handleCreateElementOnClick = async (e: KonvaEventObject<MouseEvent>) => {
       console.log('handleCreateElementOnClick', tool);
@@ -977,7 +1060,23 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
       scaleY={stageScale}
       draggable={tool === 'HAND'}
       onDragEnd={handleStageDragEnd}
+        ref={(node) => {
+          stageRef.current = node;
+        }}
       onMouseDown={(e) => {
+            if (tool === 'EXPORT') {
+              const stage = e.target.getStage();
+              if (!stage) return;
+              const pos = stage.getPointerPosition();
+              if (!pos) return;
+
+              const logicalX = (pos.x - stagePos.x) / stageScale;
+              const logicalY = (pos.y - stagePos.y) / stageScale;
+
+              setCropRect({ x: logicalX, y: logicalY, width: 0, height: 0 });
+              setIsDrawingCrop(true);
+              return;
+            }
         handleStageMouseDown(e);
 
         const stage = e.target.getStage();
@@ -1002,6 +1101,23 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
         }
       }}
       onMouseMove={(e) => {
+  if (tool === 'EXPORT' && isDrawingCrop && cropRect) {
+    const stage = e.target.getStage();
+    if (!stage) return;
+    const pos = stage.getPointerPosition();
+    if (!pos) return;
+
+    const logicalX = (pos.x - stagePos.x) / stageScale;
+    const logicalY = (pos.y - stagePos.y) / stageScale;
+
+    setCropRect({
+      x: cropRect.x,
+      y: cropRect.y,
+      width: logicalX - cropRect.x,
+      height: logicalY - cropRect.y,
+    });
+    return;
+  }
         handleMouseMove(e);
         handleStageMouseMove(e);
 
@@ -1025,6 +1141,10 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
         }
       }}
       onMouseUp={async (e) => {
+            if (tool === 'EXPORT' && isDrawingCrop) {
+              setIsDrawingCrop(false);
+              return;
+            }
         handleStageMouseUp(e);
 
         if (tool === 'ARROW' && freeArrowStart && freeArrowEnd) {
@@ -1068,8 +1188,20 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
       }}
       onWheel={handleStageWheel}
     >
-         <InfiniteGrid step={20} extent={10000} />
 
+          {exportBackgroundColor && cropRect && (
+            <Layer listening={false}>
+              <Rect
+                x={Math.min(cropRect.x, cropRect.x + cropRect.width)}
+                y={Math.min(cropRect.y, cropRect.y + cropRect.height)}
+                width={Math.abs(cropRect.width)}
+                height={Math.abs(cropRect.height)}
+                fill={exportBackgroundColor}
+              />
+            </Layer>
+          )}
+
+        {!hideDuringExport && <InfiniteGrid step={20} extent={10000} />}
         <Layer listening={false}>
           {Object.entries(remoteCursors ?? {})
             .filter(([id]) => id !== clientId)
@@ -1242,7 +1374,6 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
                   />
                 );
               }
-
               return null;
             })}
 
@@ -1259,20 +1390,55 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
         </Layer>
 
         <Layer>
-          {selectionRect.visible && tool === 'SELECT' && (
-            <Rect
-              x={Math.min(selectionRect.x1, selectionRect.x2)}
-              y={Math.min(selectionRect.y1, selectionRect.y2)}
-              width={Math.abs(selectionRect.x2 - selectionRect.x1)}
-              height={Math.abs(selectionRect.y2 - selectionRect.y1)}
-              fill="rgba(0, 161, 255, 0.1)"
-              stroke="#00a1ff"
-              strokeWidth={1}
-              dash={[4, 4]}
-            />
-          )}
+            {selectionRect.visible && tool === 'SELECT' && !hideDuringExport && (
+              <Rect
+                x={Math.min(selectionRect.x1, selectionRect.x2)}
+                y={Math.min(selectionRect.y1, selectionRect.y2)}
+                width={Math.abs(selectionRect.x2 - selectionRect.x1)}
+                height={Math.abs(selectionRect.y2 - selectionRect.y1)}
+                fill="rgba(0, 161, 255, 0.1)"
+                stroke="#00a1ff"
+                strokeWidth={1}
+                dash={[4, 4]}
+              />
+            )}
         </Layer>
+
+      {tool === 'EXPORT' && cropRect && !hideDuringExport && (
+        <Layer listening={false}>
+          <Rect
+            x={cropRect.x}
+            y={cropRect.y}
+            width={cropRect.width}
+            height={cropRect.height}
+            stroke="rgba(0, 150, 255, 0.9)"
+            strokeWidth={2 / stageScale}
+            dash={[4 / stageScale, 4 / stageScale]}
+          />
+        </Layer>
+      )}
       </Stage>
+
+{tool === 'EXPORT' && cropRect && (
+  <div
+    style={{
+      position: 'fixed',
+      right: 16,
+      bottom: 16,
+      background: 'rgba(255,255,255,0.95)',
+      borderRadius: 8,
+      padding: 8,
+      boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
+      display: 'flex',
+      gap: 8,
+      zIndex: 9999,
+    }}
+  >
+    <button onClick={() => exportCrop('png')}>Скачать PNG</button>
+    <button onClick={() => exportCrop('jpeg')}>Скачать JPEG</button>
+    <button onClick={() => exportCrop('webp')}>Скачать WebP</button>
+  </div>
+)}
 
 {Object.entries(remoteCursors)
   .filter(([id]) => id !== clientId)
@@ -1346,6 +1512,8 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
           </button>
         </div>
       )}
+
+
 
      {textEditor && (
        <>
