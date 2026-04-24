@@ -13,6 +13,7 @@ import { api } from '../api/http';
 import { useBoardWebRTC } from '../webrtc/useBoardWebRtc';
 import { WebRTCRoom } from '../webrtc/WebRTCRoom';
 import { fetchAssistants } from '../api/ai';
+import { BoardVersionsPanel } from './BoardVersionsPanel';
 
 type Tool = 'SELECT' | 'HAND' | 'BRUSH' | 'TEXT' | 'STICKER' | 'ARROW' | 'MEDIA' | 'EXPORT';
 
@@ -335,6 +336,13 @@ function handleStartVideoConference() {
   startCall();
 }
 
+function replaceAllElementsAndResetHistory(newElements: BoardElementDto[]) {
+  setElements(newElements);
+
+  setHistory([]);
+  setHistoryIndex(-1);
+}
+
 async function transformElementOnServer(
   boardUuid: string,
   elementId: number,
@@ -523,21 +531,26 @@ useBoardWs({
     }));
   },
 
-  onElementMessage: (msg) => {
-    console.log('WS ELEMENT MSG', msg);
-    setElements((prev) => {
-      if (msg.action === 'DELETE') {
-        return prev.filter((el) => el.id !== msg.element.id);
-      }
-      const exists = prev.some((el) => el.id === msg.element.id);
-      if (exists) {
-        return prev.map((el) =>
-          el.id === msg.element.id ? msg.element : el,
-        );
-      }
-      return [...prev, msg.element];
-    });
-  },
+    onElementMessage: (msg) => {
+      console.log('WS ELEMENT MSG', msg);
+      setElements((prev) => {
+        if (msg.action === 'DELETE') {
+          return prev.filter((el) => el.id !== msg.element.id);
+        }
+        const exists = prev.some((el) => el.id === msg.element.id);
+        if (exists) {
+          return prev.map((el) =>
+            el.id === msg.element.id ? msg.element : el,
+          );
+        }
+        return [...prev, msg.element];
+      });
+    },
+
+    onBoardResetMessage: (elementsFromServer) => {
+      replaceAllElementsAndResetHistory(elementsFromServer);
+      setSelectedIds([]);
+    },
 
   onCallMessage: (msg: CallSignalMessage) => {
     if (msg.type === 'CALL_STARTED' && msg.boardUuid === board.uuid) {
@@ -655,6 +668,10 @@ console.log('HISTORY', historyIndex, history);
               </>
             )}
           </div>
+
+            {board && (
+              <BoardVersionsPanel boardUuid={board.uuid} />
+            )}
 
         <button
           onClick={() => setTool('SELECT')}

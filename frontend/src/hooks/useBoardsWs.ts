@@ -12,6 +12,7 @@ interface UseBoardWsParams {
   setSendRtc?: (fn: (msg: any) => void) => void;
   onCallMessage?: (msg: any) => void;
   setSendCall?: (fn: (msg: any) => void) => void;
+  onBoardResetMessage?: (elements: any[]) => void;
 }
 
 let stompClient: Client | null = null;
@@ -32,6 +33,7 @@ export function useBoardWs({
   setSendCall,
   onRtcMessage,
   setSendRtc,
+  onBoardResetMessage,
 }: UseBoardWsParams) {
   useEffect(() => {
     if (!boardUuid) {
@@ -90,39 +92,49 @@ export function useBoardWs({
         },
       );
 
-    if (onRtcMessage) {
-      client.subscribe(`/topic/boards/${boardUuid}/rtc`, (frame) => {
-        const msg = JSON.parse(frame.body);
-        onRtcMessage(msg);
-      });
-    }
+      client.subscribe(
+        `/topic/boards/${boardUuid}/state`,
+        (message: IMessage) => {
+          const body = JSON.parse(message.body);
+          if (body.type === 'BOARD_RESET_TO_VERSION') {
+            const elements = body.payload?.elements ?? [];
+            if (onBoardResetMessage) {
+              onBoardResetMessage(elements);
+            }
+          }
+        },
+      );
 
-    if (onCallMessage) {
-      client.subscribe(`/topic/boards/${boardUuid}/call`, (frame) => {
-        const msg = JSON.parse(frame.body);
-        onCallMessage(msg);
-      });
-    }
-
-    if (setSendRtc) {
-      setSendRtc((msg: any) => {
-        if (!stompClient || !stompClient.connected) return;
-        stompClient.publish({
-          destination: '/app/boards/rtc',
-          body: JSON.stringify(msg),
+      if (onRtcMessage) {
+        client.subscribe(`/topic/boards/${boardUuid}/rtc`, (frame) => {
+          const msg = JSON.parse(frame.body);
+          onRtcMessage(msg);
         });
-      });
-    }
-
-    if (setSendCall) {
-      setSendCall((msg: any) => {
-        if (!stompClient || !stompClient.connected) return;
-        stompClient.publish({
-          destination: '/app/boards/call',
-          body: JSON.stringify(msg),
+      }
+      if (onCallMessage) {
+        client.subscribe(`/topic/boards/${boardUuid}/call`, (frame) => {
+          const msg = JSON.parse(frame.body);
+          onCallMessage(msg);
         });
-      });
-    }
+      }
+      if (setSendRtc) {
+        setSendRtc((msg: any) => {
+          if (!stompClient || !stompClient.connected) return;
+          stompClient.publish({
+            destination: '/app/boards/rtc',
+            body: JSON.stringify(msg),
+          });
+        });
+      }
+      if (setSendCall) {
+        setSendCall((msg: any) => {
+          if (!stompClient || !stompClient.connected) return;
+          stompClient.publish({
+            destination: '/app/boards/call',
+            body: JSON.stringify(msg),
+          });
+        });
+      }
     };
 
     client.onStompError = (frame) => {
