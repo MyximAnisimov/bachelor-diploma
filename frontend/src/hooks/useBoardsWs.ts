@@ -13,6 +13,10 @@ interface UseBoardWsParams {
   onCallMessage?: (msg: any) => void;
   setSendCall?: (fn: (msg: any) => void) => void;
   onBoardResetMessage?: (elements: any[]) => void;
+
+  onVersionRestoreRequest?: (payload: any) => void;
+  onVersionRestoreApproved?: (payload: any) => void;
+  setSendState?: (fn: (msg: any) => void) => void;
 }
 
 let stompClient: Client | null = null;
@@ -34,6 +38,9 @@ export function useBoardWs({
   onRtcMessage,
   setSendRtc,
   onBoardResetMessage,
+  onVersionRestoreRequest,
+  onVersionRestoreApproved,
+  setSendState,
 }: UseBoardWsParams) {
   useEffect(() => {
     if (!boardUuid) {
@@ -96,11 +103,22 @@ export function useBoardWs({
         `/topic/boards/${boardUuid}/state`,
         (message: IMessage) => {
           const body = JSON.parse(message.body);
+          console.log('STATE MSG', body);
+
           if (body.type === 'BOARD_RESET_TO_VERSION') {
             const elements = body.payload?.elements ?? [];
-            if (onBoardResetMessage) {
-              onBoardResetMessage(elements);
-            }
+            onBoardResetMessage?.(elements);
+            return;
+          }
+
+          if (body.type === 'VERSION_RESTORE_REQUEST') {
+            onVersionRestoreRequest?.(body.payload);
+            return;
+          }
+
+          if (body.type === 'VERSION_RESTORE_APPROVED') {
+            onVersionRestoreApproved?.(body.payload);
+            return;
           }
         },
       );
@@ -135,6 +153,18 @@ export function useBoardWs({
           });
         });
       }
+
+    const sendState = (msg: any) => {
+      if (!stompClient || !stompClient.connected) return;
+      stompClient.publish({
+        destination: `/app/boards/${boardUuid}/state`,
+        body: JSON.stringify(msg),
+      });
+    };
+
+    if (setSendState) {
+      setSendState(sendState);
+    }
     };
 
     client.onStompError = (frame) => {

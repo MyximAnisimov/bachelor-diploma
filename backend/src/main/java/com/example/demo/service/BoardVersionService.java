@@ -146,4 +146,33 @@ public class BoardVersionService {
                 .map(elementMapper::toDto)
                 .toList();
     }
+
+    @Transactional(readOnly = true)
+    public List<BoardElementDto> getVersionSnapshot(UUID boardUuid,
+                                                    Long versionId,
+                                                    Principal principal) throws Exception {
+        User currentUser = getCurrentUser(principal);
+        Board board = boardRepository.findByUuid(boardUuid)
+                .orElseThrow(() -> new IllegalArgumentException("Доска не найдена"));
+
+        if (!boardService.canView(board, currentUser)) {
+            throw new SecurityException("Нет доступа к доске");
+        }
+
+        BoardVersion version = versionRepository.findById(versionId)
+                .orElseThrow(() -> new IllegalArgumentException("Версия не найдена"));
+
+        if (!version.getBoard().getId().equals(board.getId())) {
+            throw new IllegalArgumentException("Версия не принадлежит этой доске");
+        }
+
+        String json = version.getPayloadJson();
+        if (json == null || json.isBlank() || !json.trim().startsWith("{")) {
+            throw new IllegalStateException("Версия содержит некорректный снимок доски");
+        }
+
+        BoardSnapshot snapshot = objectMapper.readValue(json, BoardSnapshot.class);
+
+        return snapshot.elements;
+    }
 }

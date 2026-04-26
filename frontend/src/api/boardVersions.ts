@@ -28,3 +28,11 @@ export async function restoreBoardVersion(
 ): Promise<void> {
   await api.post(`/api/boards/${boardUuid}/versions/${versionId}/restore`);
 }
+
+export async function fetchBoardVersionPreview(
+  boardUuid: string,
+  versionId: number,
+): Promise<BoardElementDto[]> {
+  const { data } = await api.get(`/api/boards/${boardUuid}/versions/${versionId}/preview`);
+  return data;
+}

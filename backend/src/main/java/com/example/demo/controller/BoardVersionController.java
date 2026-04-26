@@ -85,4 +85,13 @@ public class BoardVersionController {
 
         return ResponseEntity.ok().build();
     }
+
+    @GetMapping("/{versionId}/preview")
+    public List<BoardElementDto> previewVersion(
+            @PathVariable UUID boardUuid,
+            @PathVariable Long versionId,
+            Principal principal
+    ) throws Exception {
+        return boardVersionService.getVersionSnapshot(boardUuid, versionId, principal);
+    }
 }

@@ -14,6 +14,7 @@ import { useBoardWebRTC } from '../webrtc/useBoardWebRtc';
 import { WebRTCRoom } from '../webrtc/WebRTCRoom';
 import { fetchAssistants } from '../api/ai';
 import { BoardVersionsPanel } from './BoardVersionsPanel';
+import { restoreBoardVersion } from '../api/boardVersions';
 
 type Tool = 'SELECT' | 'HAND' | 'BRUSH' | 'TEXT' | 'STICKER' | 'ARROW' | 'MEDIA' | 'EXPORT';
 
@@ -75,6 +76,11 @@ export const BoardPage: React.FC = () => {
   const [assistants, setAssistants] = useState<AiAssistant[]>([]);
   const [selectedAssistant, setSelectedAssistant] = useState<AiAssistant | null>(null);
   const [aiChatOpen, setAiChatOpen] = useState(false);
+
+  const [previewElements, setPreviewElements] = useState<BoardElementDto[] | null>(null);
+  const isPreviewMode = previewElements !== null;
+  const elementsToRender = isPreviewMode ? previewElements! : elements;
+  const sendStateRef = useRef<(msg: any) => void>(() => {});
 
   const {
     localStream,
@@ -577,6 +583,44 @@ useBoardWs({
   setSendCall: (fn) => {
     sendCallRef.current = fn;
   },
+
+  onVersionRestoreRequest: (payload) => {
+    console.log('onVersionRestoreRequest payload', payload, 'isOwner=', isOwner, 'board=', board);
+
+    const { versionId, requestedBy, label } = payload;
+    if (!isOwner) return;
+
+    const ok = window.confirm(
+      `${requestedBy?.name || 'Пользователь'} хочет откатиться к версии ${
+        label || ('#' + versionId)
+      }. Выполнить откат для всех?`,
+    );
+    if (!ok) {
+      console.log('Owner declined restore');
+      return;
+    }
+
+    console.log('Owner accepted, calling restoreBoardVersion', {
+      boardUuid: board?.uuid,
+      versionId,
+    });
+
+    restoreBoardVersion(board.uuid, versionId)
+      .then((res) => {
+        console.log('restoreBoardVersion OK', res);
+      })
+      .catch((e) => {
+        console.error('Failed to restore version', e);
+        alert('Не удалось откатиться к версии');
+      });
+  },
+  setSendState: (fn) => {
+    sendStateRef.current = fn;
+  },
+  onBoardResetMessage: (elementsFromServer) => {
+    replaceAllElementsAndResetHistory(elementsFromServer);
+    setSelectedIds([]);
+  },
 });
 
   const isOwner =
@@ -668,10 +712,6 @@ console.log('HISTORY', historyIndex, history);
               </>
             )}
           </div>
-
-            {board && (
-              <BoardVersionsPanel boardUuid={board.uuid} />
-            )}
 
         <button
           onClick={() => setTool('SELECT')}
@@ -1090,12 +1130,23 @@ console.log('HISTORY', historyIndex, history);
     </button>
   </div>
 )}
+     {board && (
+          <BoardVersionsPanel
+            boardUuid={board.uuid}
+            onPreviewVersion={(els) => setPreviewElements(els)}
+            isOwner={isOwner}
+            sendState={(msg) => sendStateRef.current?.(msg)}
+            currentUserName={
+              currentUser?.fullName || currentUser?.name || currentUser?.email || 'Пользователь'
+            }
+          />
+      )}
       </header>
 
               <div className="board-wrapper" style={{ position: 'relative' }}>
         <BoardCanvas
           boardUuid={board.uuid}
-          elements={elements}
+          elements={elementsToRender}
           onElementsChange={setElements}
           tool={tool}
           locks={locks}

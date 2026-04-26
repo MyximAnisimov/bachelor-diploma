@@ -1,5 +1,6 @@
 package com.example.demo.controller.ws;
 
+import com.example.demo.dto.ws.BoardStateMessage;
 import com.example.demo.dto.ws.CursorMessage;
 import com.example.demo.dto.ws.ElementLockMessage;
 import com.example.demo.model.Board;
@@ -8,7 +9,9 @@ import com.example.demo.repository.BoardRepository;
 import com.example.demo.repository.UserRepository;
 import com.example.demo.service.BoardService;
 import com.example.demo.service.ElementLockService;
+import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
+import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -99,5 +102,14 @@ public class BoardWsController {
                 "/topic/boards/" + msg.getBoardUuid() + "/cursors",
                 msg
         );
+    }
+
+    @MessageMapping("/boards/{boardUuid}/state")
+    @SendTo("/topic/boards/{boardUuid}/state")
+    public BoardStateMessage handleState(
+            @DestinationVariable UUID boardUuid,
+            BoardStateMessage message
+    ) {
+        return message;
     }
 }
