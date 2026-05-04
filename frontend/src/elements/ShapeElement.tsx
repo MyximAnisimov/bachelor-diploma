@@ -11,6 +11,7 @@ interface Props {
   onClick: (e: KonvaEventObject<MouseEvent>) => void;
   onContextMenu: (e: KonvaEventObject<PointerEvent>) => void;
   registerNode: (node: any | null) => void;
+  showAnchors?: boolean;
 }
 
 export const ShapeElement: React.FC<Props> = ({
@@ -21,6 +22,7 @@ export const ShapeElement: React.FC<Props> = ({
   onClick,
   onContextMenu,
   registerNode,
+  showAnchors,
 }) => {
   const groupRef = useRef<any>(null);
 
@@ -226,6 +228,106 @@ export const ShapeElement: React.FC<Props> = ({
     }
   };
 
+const getShapeAnchors = (element: BoardElementDto) => {
+  const props = (element.properties || {}) as any;
+  const kind = props.shapeKind ?? 'RECT';
+  const w = element.width;
+  const h = element.height;
+
+  switch (kind) {
+    case 'RECT':
+      return [
+        { x: 0, y: 0 },
+        { x: w, y: 0 },
+        { x: w, y: h },
+        { x: 0, y: h },
+        { x: w / 2, y: 0 },
+        { x: w, y: h / 2 },
+        { x: w / 2, y: h },
+        { x: 0, y: h / 2 },
+      ];
+
+    case 'CIRCLE': {
+      const cx = w / 2;
+      const cy = h / 2;
+      const r = Math.min(w, h) / 2;
+      return [
+        { x: cx, y: cy - r },
+        { x: cx + r, y: cy },
+        { x: cx, y: cy + r },
+        { x: cx - r, y: cy },
+      ];
+    }
+
+    case 'OVAL': {
+      const cx = w / 2;
+      const cy = h / 2;
+      const rx = w / 2;
+      const ry = h / 2;
+      return [
+        { x: cx, y: cy - ry },
+        { x: cx + rx, y: cy },
+        { x: cx, y: cy + ry },
+        { x: cx - rx, y: cy },
+      ];
+    }
+
+    case 'DIAMOND': {
+      return [
+        { x: w / 2, y: 0 },
+        { x: w, y: h / 2 },
+        { x: w / 2, y: h },
+        { x: 0, y: h / 2 },
+      ];
+    }
+
+    case 'TRIANGLE': {
+      return [
+        { x: w / 2, y: 0 },
+        { x: w, y: h },
+        { x: 0, y: h },
+      ];
+    }
+
+    case 'TRAPEZOID': {
+      const topWidth = w * 0.6;
+      const offset = (w - topWidth) / 2;
+      return [
+        { x: offset, y: 0 },
+        { x: offset + topWidth, y: 0 },
+        { x: 0, y: h },
+        { x: w, y: h },
+      ];
+    }
+
+    case 'CYLINDER': {
+      return [
+        { x: w / 2, y: 0 },
+        { x: w, y: h / 2 },
+        { x: w / 2, y: h },
+        { x: 0, y: h / 2 },
+      ];
+    }
+
+    default:
+      return [
+        { x: 0, y: 0 },
+        { x: w, y: 0 },
+        { x: w, y: h },
+        { x: 0, y: h },
+        { x: w / 2, y: 0 },
+        { x: w, y: h / 2 },
+        { x: w / 2, y: h },
+        { x: 0, y: h / 2 },
+      ];
+  }
+};
+
+  const w = element.width;
+  const h = element.height;
+  const anchorRadius = 5;
+  const anchorPoints = getShapeAnchors(element);
+
   return (
     <Group
       ref={groupRef}
@@ -240,6 +342,21 @@ export const ShapeElement: React.FC<Props> = ({
       onTransformEnd={handleTransformEnd}
     >
       {renderShape()}
+
+      {showAnchors &&
+        anchorPoints.map((p, idx) => (
+          <Circle
+            key={idx}
+            x={p.x}
+            y={p.y}
+            radius={anchorRadius}
+            fill="white"
+            stroke="#00a1ff"
+            strokeWidth={1.5}
+            opacity={0.9}
+            listening={false}
+          />
+        ))}
     </Group>
   );
 };

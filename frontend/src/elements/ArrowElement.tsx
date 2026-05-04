@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Arrow, Circle } from 'react-konva';
 import type { BoardElementDto } from '../../api/types';
 import type { KonvaEventObject } from 'konva/lib/Node';
+import { getRectAnchors, getElementAnchorWorldPoint } from '../utils/anchorUtils';
 
 interface Props {
   element: BoardElementDto;
@@ -12,6 +13,8 @@ interface Props {
   onChange: (updated: BoardElementDto) => void;
   canEdit: boolean;
   canDrag: boolean;
+  stageScale: number;
+  stagePos: { x: number; y: number };
 }
 
 function getStickerAnchors(el: BoardElementDto) {
@@ -57,6 +60,8 @@ export const ArrowElement: React.FC<Props> = ({
   onChange,
   canEdit,
   canDrag,
+  stagePos,
+   stageScale,
 }) => {
   const propsAny = (element.properties || {}) as any;
 
@@ -97,126 +102,143 @@ export const ArrowElement: React.FC<Props> = ({
     return null;
   }
 
-  const [tempFromPoint, setTempFromPoint] = useState<{ x: number; y: number } | null>(
-    null,
-  );
-  const [tempToPoint, setTempToPoint] = useState<{ x: number; y: number } | null>(
-    null,
-  );
-
   const handleRadius = 6;
 
-  const findNearestStickerAnchor = (pos: { x: number; y: number }) => {
-    let bestSticker: BoardElementDto | null = null;
-    let bestAnchorIdx = 0;
-    let bestDist2 = Infinity;
+const getPointerLogical = (stage: any, stagePos: { x: number; y: number }, stageScale: number) => {
+  const p = stage.getPointerPosition();
+  if (!p) return null;
+  return {
+    x: (p.x - stagePos.x) / stageScale,
+    y: (p.y - stagePos.y) / stageScale,
+  };
+};
 
-    const stickers = allElements.filter((el) => el.type === 'STICKER');
-    stickers.forEach((sticker) => {
-      const anchors = getStickerAnchors(sticker);
-      anchors.forEach((a, idx) => {
-        const world = getAnchorWorldPoint(sticker, idx);
-        const dx = world.x - pos.x;
-        const dy = world.y - pos.y;
-        const d2 = dx * dx + dy * dy;
-        if (d2 < bestDist2) {
-          bestDist2 = d2;
-          bestSticker = sticker;
-          bestAnchorIdx = idx;
-        }
-      });
+const findNearestElementAnchor = (pos: { x: number; y: number }) => {
+  let bestElement: BoardElementDto | null = null;
+  let bestAnchorIdx = 0;
+  let bestDist2 = Infinity;
+
+  const candidates = allElements.filter((el) =>
+    anchorableTypes.has(el.type),
+  );
+
+  candidates.forEach((el) => {
+    const anchors = getRectAnchors(el);
+    anchors.forEach((_, idx) => {
+      const world = getElementAnchorWorldPoint(el, idx);
+      const dx = world.x - pos.x;
+      const dy = world.y - pos.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestDist2) {
+        bestDist2 = d2;
+        bestElement = el;
+        bestAnchorIdx = idx;
+      }
     });
+  });
 
-    if (!bestSticker) return null;
-    if (bestDist2 > SNAP_RADIUS * SNAP_RADIUS) return null;
+  if (!bestElement) return null;
+  if (bestDist2 > SNAP_RADIUS * SNAP_RADIUS) return null;
 
-    return { sticker: bestSticker, anchorIndex: bestAnchorIdx };
+  return { element: bestElement, anchorIndex: bestAnchorIdx };
+};
+
+  const [tempFromPoint, setTempFromPoint] = useState<{ x: number; y: number } | null>(null);
+  const [tempToPoint, setTempToPoint] = useState<{ x: number; y: number } | null>(null);
+
+  const toLogical = (abs: { x: number; y: number }) => ({
+    x: (abs.x - stagePos.x) / stageScale,
+    y: (abs.y - stagePos.y) / stageScale,
+  });
+
+const handleEndDragMove =
+  (kind: 'from' | 'to') =>
+  (e: KonvaEventObject<DragEvent>) => {
+    if (!canEdit) return;
+    const stage = e.target.getStage();
+    if (!stage) return;
+
+    const pos = getPointerLogical(stage, stagePos, stageScale);
+    if (!pos) return;
+
+    if (kind === 'from') {
+      setTempFromPoint({ x: pos.x, y: pos.y });
+    } else {
+      setTempToPoint({ x: pos.x, y: pos.y });
+    }
   };
 
-  const handleEndDragMove =
-    (kind: 'from' | 'to') =>
-    (e: KonvaEventObject<DragEvent>) => {
-      if (!canEdit) return;
-      const node = e.target;
-      const pos = node.getAbsolutePosition();
-      if (kind === 'from') {
-        setTempFromPoint({ x: pos.x, y: pos.y });
-      } else {
-        setTempToPoint({ x: pos.x, y: pos.y });
-      }
-    };
+const handleEndDragEnd =
+  (kind: 'from' | 'to') =>
+  (e: KonvaEventObject<DragEvent>) => {
+    if (!canEdit) return;
+    const stage = e.target.getStage();
+    if (!stage) return;
 
-  const handleEndDragEnd =
-    (kind: 'from' | 'to') =>
-    (e: KonvaEventObject<DragEvent>) => {
-      if (!canEdit) return;
-      const node = e.target;
-      const pos = node.getAbsolutePosition();
-      const nearest = findNearestStickerAnchor(pos);
+    const pos = getPointerLogical(stage, stagePos, stageScale);
+    if (!pos) return;
 
-      if (kind === 'from') {
-        setTempFromPoint(null);
-      } else {
-        setTempToPoint(null);
-      }
+    const nearest = findNearestStickerAnchor(pos);
 
-      const p = (element.properties || {}) as any;
-      const pHasFreeCoords =
-        typeof p.x1 === 'number' &&
-        typeof p.y1 === 'number' &&
-        typeof p.x2 === 'number' &&
-        typeof p.y2 === 'number';
+    if (kind === 'from') {
+      setTempFromPoint(null);
+    } else {
+      setTempToPoint(null);
+    }
 
-      if (!nearest) {
-        if (pHasFreeCoords) {
-          if (kind === 'from') {
-            const updated: BoardElementDto = {
-              ...element,
-              properties: {
-                ...p,
-                x1: pos.x,
-                y1: pos.y,
-              },
-            };
-            onChange(updated);
-          } else {
-            const updated: BoardElementDto = {
-              ...element,
-              properties: {
-                ...p,
-                x2: pos.x,
-                y2: pos.y,
-              },
-            };
-            onChange(updated);
-          }
+    const p = (element.properties || {}) as any;
+    const pHasFreeCoords =
+      typeof p.x1 === 'number' &&
+      typeof p.y1 === 'number' &&
+      typeof p.x2 === 'number' &&
+      typeof p.y2 === 'number';
+
+    if (!nearest) {
+      if (pHasFreeCoords) {
+        if (kind === 'from') {
+          onChange({
+            ...element,
+            properties: {
+              ...p,
+              x1: pos.x,
+              y1: pos.y,
+            },
+          });
+        } else {
+          onChange({
+            ...element,
+            properties: {
+              ...p,
+              x2: pos.x,
+              y2: pos.y,
+            },
+          });
         }
-        return;
       }
+      return;
+    }
 
-      const { sticker, anchorIndex } = nearest;
-      if (kind === 'from') {
-        const updated: BoardElementDto = {
-          ...element,
-          properties: {
-            ...p,
-            fromId: sticker.id,
-            fromAnchorIndex: anchorIndex,
-          },
-        };
-        onChange(updated);
-      } else {
-        const updated: BoardElementDto = {
-          ...element,
-          properties: {
-            ...p,
-            toId: sticker.id,
-            toAnchorIndex: anchorIndex,
-          },
-        };
-        onChange(updated);
-      }
-    };
+    const { sticker, anchorIndex } = nearest;
+    if (kind === 'from') {
+      onChange({
+        ...element,
+        properties: {
+          ...p,
+          fromId: sticker.id,
+          fromAnchorIndex: anchorIndex,
+        },
+      });
+    } else {
+      onChange({
+        ...element,
+        properties: {
+          ...p,
+          toId: sticker.id,
+          toAnchorIndex: anchorIndex,
+        },
+      });
+    }
+  };
 
   const start = tempFromPoint ?? baseFromPoint!;
   const end = tempToPoint ?? baseToPoint!;

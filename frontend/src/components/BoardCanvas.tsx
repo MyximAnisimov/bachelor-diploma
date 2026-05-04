@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useLayoutEffect } from 'react';
 import { Stage, Layer, Rect, Transformer, Line, Group, Circle } from 'react-konva';
 import type { KonvaEventObject } from 'konva/lib/Node';
 import type { Dispatch, SetStateAction } from 'react';
@@ -195,15 +195,31 @@ const [freeArrowEnd, setFreeArrowEnd] = useState<{ x: number; y: number } | null
 
     const [needName, setNeedName] = useState(!displayName);
 
-
-
-  const width = window.innerWidth;
-  const height = window.innerHeight - 60;
-
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
 
 const [hideDuringExport, setHideDuringExport] = useState(false);
 const [exportBackgroundColor, setExportBackgroundColor] = useState<string | null>(null);
+
+const selectedArrow = elements.find(
+  (el) => el.type === 'ARROW' && selectedIds.includes(el.id),
+);
+const arrowIsSelected = !!selectedArrow;
+
+const [size, setSize] = useState({ width: 0, height: 0 });
+
+useLayoutEffect(() => {
+  if (!containerRef.current) return;
+
+  const observer = new ResizeObserver(([entry]) => {
+    const { width, height } = entry.contentRect;
+    setSize({ width, height });
+  });
+
+  observer.observe(containerRef.current);
+  return () => observer.disconnect();
+}, []);
+
+const { width, height } = size;
 
 useEffect(() => {
   const transformer = transformerRef.current;
@@ -1051,9 +1067,9 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
       style={{ width: '100%', height: '100%', position: 'relative' }}
     >
     <Stage
-      width={width}
-      height={height}
-      style={{ background: '#f5f5f5' }}
+        width={width}
+        height={height}
+        style={{ background: '#f5f5f5' }}
       x={stagePos.x}
       y={stagePos.y}
       scaleX={stageScale}
@@ -1233,6 +1249,7 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
                     registerNode={(node) => {
                       nodeRefs.current[el.id] = node;
                     }}
+                    showAnchors={tool === 'ARROW' || arrowIsSelected}
                   />
                     {isSelected && (
                       <Group
@@ -1295,6 +1312,7 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
                               onUnlock={(id) => {
                                 sendLock(boardUuid, [id], 'UNLOCK');
                               }}
+                          showAnchors={tool === 'ARROW' || arrowIsSelected}
                     />
                   );
                 }
@@ -1335,26 +1353,29 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
               }
 
               if (el.type === 'STICKER') {
-                return (
-                  <StickerElement
-                    key={el.id}
-                    element={el}
-                    isSelected={
-                      tool === 'ARROW'
-                        ? arrowDraft?.fromId === el.id
-                        : isSelected
-                    }
-                    canDrag={canDragElements && !isLockedByOther && tool === 'SELECT'}
-                    onClick={(evt) => handleElementClick(el, evt)}
-                    onContextMenu={(evt) => handleElementContextMenu(el, evt)}
-                    onDblClick={() => openTextEditorForElement(el)}
-                    onChange={handleElementChange}
-                    registerNode={(node) => {
-                      nodeRefs.current[el.id] = node;
-                    }}
-                    showAnchors={tool === 'ARROW'}
-                  />
-                );
+                  return (
+                    <StickerElement
+                      key={el.id}
+                      element={el}
+                      isSelected={
+                        tool === 'ARROW'
+                          ? arrowDraft?.fromId === el.id
+                          : isSelected
+                      }
+                      canDrag={canDragElements && !isLockedByOther && tool === 'SELECT'}
+                      onClick={(evt) => handleElementClick(el, evt)}
+                      onContextMenu={(evt) => handleElementContextMenu(el, evt)}
+                      onDblClick={() => openTextEditorForElement(el)}
+                      onChange={handleElementChange}
+                      registerNode={(node) => {
+                        nodeRefs.current[el.id] = node;
+                      }}
+                            showAnchors={
+                              tool === 'ARROW' ||
+                              arrowIsSelected
+                            }
+                    />
+                  );
               }
 
               if (el.type === 'ARROW') {
@@ -1362,15 +1383,17 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
                 const canDragArrow = tool === 'SELECT' && !isLockedByOther;
                 return (
                   <ArrowElement
-                    key={el.id}
-                    element={el}
-                    allElements={elements}
-                    isSelected={isSelected}
-                    onClick={(evt) => handleElementClick(el, evt)}
-                    onContextMenu={(evt) => handleElementContextMenu(el, evt)}
-                    onChange={handleElementChange}
-                    canEdit={canEdit}
-                    canDrag={canDragArrow}
+                      key={el.id}
+                      element={el}
+                      allElements={elements}
+                      isSelected={isSelected}
+                      onClick={(evt) => handleElementClick(el, evt)}
+                      onContextMenu={(evt) => handleElementContextMenu(el, evt)}
+                      onChange={handleElementChange}
+                      canEdit={canEdit}
+                      canDrag={canDragArrow}
+                      stageScale={stageScale}
+                      stagePos={stagePos}
                   />
                 );
               }

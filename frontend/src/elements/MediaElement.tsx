@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Group, Rect, Image as KonvaImage } from 'react-konva';
+import { Group, Rect, Image as KonvaImage, Circle } from 'react-konva';
 import type { BoardElementDto } from '../api/types';
 import type { KonvaEventObject } from 'konva/lib/Node';
 import { api } from '../api/http';
@@ -15,6 +15,7 @@ interface Props {
   registerNode?: (node: Konva.Node | null) => void;
   onLock?: (id: number) => void;
   onUnlock?: (id: number) => void;
+  showAnchors?: boolean;
 }
 
 export const MediaElement: React.FC<Props> = ({
@@ -27,6 +28,7 @@ export const MediaElement: React.FC<Props> = ({
   registerNode,
   onLock,
   onUnlock,
+  showAnchors,
 }) => {
   const propsAny = (element.properties || {}) as any;
   const rawUrl: string | undefined = propsAny.url;
@@ -68,6 +70,18 @@ useEffect(() => {
 
 const halfW = element.width / 2;
 const halfH = element.height / 2;
+
+const anchorRadius = 5;
+const anchorPoints = [
+  { x: -halfW, y: -halfH },
+  { x: halfW, y: -halfH },
+  { x: halfW, y: halfH },
+  { x: -halfW, y: halfH },
+  { x: 0, y: -halfH },
+  { x: halfW, y: 0 },
+  { x: 0, y: halfH },
+  { x: -halfW, y: 0 },
+];
 
 return (
   <Group
@@ -129,26 +143,41 @@ return (
       onUnlock?.(element.id);
     }}
   >
-    <KonvaImage
-      image={imageRef.current || undefined}
-      x={-halfW}
-      y={-halfH}
-      width={element.width}
-      height={element.height}
-      rotation={0}
-    />
-    {isSelected && (
-      <Rect
-        x={-halfW}
-        y={-halfH}
-        width={element.width}
-        height={element.height}
-        stroke="#00a1ff"
-        strokeWidth={2}
-        dash={[4, 4]}
-        listening={false}
-      />
-    )}
-  </Group>
+        <KonvaImage
+          image={imageRef.current || undefined}
+          x={-halfW}
+          y={-halfH}
+          width={element.width}
+          height={element.height}
+          rotation={0}
+        />
+        {isSelected && (
+          <Rect
+            x={-halfW}
+            y={-halfH}
+            width={element.width}
+            height={element.height}
+            stroke="#00a1ff"
+            strokeWidth={2}
+            dash={[4, 4]}
+            listening={false}
+          />
+        )}
+
+        {showAnchors &&
+          anchorPoints.map((p, idx) => (
+            <Circle
+              key={idx}
+              x={p.x}
+              y={p.y}
+              radius={anchorRadius}
+              fill="white"
+              stroke="#00a1ff"
+              strokeWidth={1.5}
+              opacity={0.9}
+              listening={false}
+            />
+          ))}
+      </Group>
 );
 };
