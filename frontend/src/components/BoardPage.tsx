@@ -43,6 +43,11 @@ type ShapeKind =
   | 'CYLINDER'
   | 'CIRCLE'
   | 'OVAL';
+
+type AiMessage = {
+  role: 'user' | 'assistant';
+  content: string;
+};
   interface ElementsState {
     [id: number]: ElementDto;
   }
@@ -73,6 +78,12 @@ export const BoardPage: React.FC = () => {
   const [assistants, setAssistants] = useState<AiAssistant[]>([]);
   const [selectedAssistant, setSelectedAssistant] = useState<AiAssistant | null>(null);
   const [aiChatOpen, setAiChatOpen] = useState(false);
+  const [aiDialogOpen, setAiDialogOpen] = useState(false);
+  const [aiDialogMessages, setAiDialogMessages] = useState<AiMessage[]>([]);
+  const [aiDialogPosition, setAiDialogPosition] = useState({ x: 100, y: 100 });
+  const [aiMessages, setAiMessages] = useState<AiMessage[]>([]);
+  const [aiPosition, setAiPosition] = useState({ x: 100, y: 100 });
+  const [isAiOpen, setIsAiOpen] = useState(false);
   const [previewElements, setPreviewElements] = useState<BoardElementDto[] | null>(null);
   const isPreviewMode = previewElements !== null;
   const elementsToRender = isPreviewMode ? previewElements! : elements;
@@ -92,6 +103,7 @@ export const BoardPage: React.FC = () => {
   const [previewActive, setPreviewActive] = useState(false);
   const [showUuidNotice, setShowUuidNotice] = useState(false);
   const [showCopyToast, setShowCopyToast] = useState(false);
+  const [aiSize, setAiSize] = useState({ width: 520, height: 520 });
   const {
     localStream,
     remoteStreams,
@@ -104,6 +116,16 @@ export const BoardPage: React.FC = () => {
     toggleMic,
     mediaError,
   } = useBoardWebRTC(board?.uuid);
+const cursorColors = [
+  '#ef4444',
+  '#22c55e',
+  '#3b82f6',
+  '#eab308',
+  '#a855f7',
+  '#ec4899',
+  '#06b6d4',
+  '#f97316',
+];
 const readyForCall = !!board && !mediaError;
 async function syncUndoEntryToServer(entry: HistoryEntry) {
   const elementsToSave = Object.values(entry.before ?? {});
@@ -114,6 +136,14 @@ async function syncUndoEntryToServer(entry: HistoryEntry) {
       }),
     ),
   );
+}
+function getUserColor(clientId: string) {
+  let hash = 0;
+  for (let i = 0; i < clientId.length; i++) {
+    hash = (hash * 31 + clientId.charCodeAt(i)) | 0;
+  }
+  const idx = Math.abs(hash) % cursorColors.length;
+  return cursorColors[idx];
 }
 
 useEffect(() => {
@@ -142,15 +172,31 @@ function undo() {
   if (!canUndo) return;
   const entry = history[historyIndex];
   if (!entry) return;
-  setElements((prev) => {
-    const map = new Map(prev.map((e) => [e.id, e]));
-    Object.values(entry.before ?? {}).forEach((el) => {
-      map.set(el.id, el);
-    });
+
+  setElements(prev => {
+    const map = new Map(prev.map(e => [e.id, e]));
+    const beforeIds = Object.keys(entry.before);
+    const afterIds = Object.keys(entry.after);
+
+    if (beforeIds.length === 0 && afterIds.length > 0) {
+      for (const idStr of afterIds) {
+        const id = Number(idStr);
+        map.delete(id);
+      }
+    } else if (beforeIds.length > 0 && afterIds.length === 0) {
+      for (const el of Object.values(entry.before)) {
+        map.set(el.id, cloneElement(el));
+      }
+    } else {
+      for (const el of Object.values(entry.before)) {
+        map.set(el.id, cloneElement(el));
+      }
+    }
+
     return Array.from(map.values());
   });
-  syncUndoEntryToServer(entry);
-  setHistoryIndex((idx) => idx - 1);
+
+  setHistoryIndex(idx => idx - 1);
 }
 async function syncRedoEntryToServer(entry: HistoryEntry) {
   const elementsToSave = Object.values(entry.after ?? {});
@@ -166,15 +212,31 @@ function redo() {
   if (!canRedo) return;
   const entry = history[historyIndex + 1];
   if (!entry) return;
-  setElements((prev) => {
-    const map = new Map(prev.map((e) => [e.id, e]));
-    Object.values(entry.after ?? {}).forEach((el) => {
-      map.set(el.id, el);
-    });
+
+  setElements(prev => {
+    const map = new Map(prev.map(e => [e.id, e]));
+    const beforeIds = Object.keys(entry.before);
+    const afterIds = Object.keys(entry.after);
+
+    if (beforeIds.length === 0 && afterIds.length > 0) {
+      for (const el of Object.values(entry.after)) {
+        map.set(el.id, cloneElement(el));
+      }
+    } else if (beforeIds.length > 0 && afterIds.length === 0) {
+      for (const idStr of beforeIds) {
+        const id = Number(idStr);
+        map.delete(id);
+      }
+    } else {
+      for (const el of Object.values(entry.after)) {
+        map.set(el.id, cloneElement(el));
+      }
+    }
+
     return Array.from(map.values());
   });
-  syncRedoEntryToServer(entry);
-  setHistoryIndex((idx) => idx + 1);
+
+  setHistoryIndex(idx => idx + 1);
 }
 
 async function handlePreviewVersion() {
@@ -254,42 +316,27 @@ const handleAddRect = async () => {
   addElements([el], { recordHistory: true });
 };
 function applyElementChanges(
-  changes: { id: number; patch: Partial<ElementDto> }[],
+  changes: { id: number; patch: Partial<BoardElementDto> }[],
   options?: { recordHistory?: boolean },
 ) {
-  setElements((prev) => {
-    const map = new Map(prev.map((e) => [e.id, e]));
+  setElements(prev => {
+    const map = new Map(prev.map(e => [e.id, e]));
     const before: ElementsState = {};
     const after: ElementsState = {};
+
     for (const { id, patch } of changes) {
       const current = map.get(id);
       if (!current) continue;
-      before[id] = current;
-      const updated = { ...current, ...patch };
+
+      before[id] = cloneElement(current);
+      const updated: BoardElementDto = { ...current, ...patch };
       map.set(id, updated);
-      after[id] = updated;
+      after[id] = cloneElement(updated);
     }
+
     const next = Array.from(map.values());
-    if (options?.recordHistory) {
-      setHistory((prevHistory) => {
-        const trimmed = prevHistory.slice(0, historyIndex + 1);
-        const newHistory = [...trimmed, { before, after }];
-        setHistoryIndex(newHistory.length - 1);
-        return newHistory;
-      });
-    }
-    return next;
-  });
-}
-function addElements(newElements: ElementDto[], options?: { recordHistory?: boolean }) {
-  setElements(prev => {
-    const before: ElementsState = {};
-    const after: ElementsState = {};
-    newElements.forEach(el => {
-      after[el.id] = el;
-    });
-    const next = [...prev, ...newElements];
-    if (options?.recordHistory) {
+
+    if (options?.recordHistory && Object.keys(before).length > 0) {
       setHistory(prevHistory => {
         const trimmed = prevHistory.slice(0, historyIndex + 1);
         const newHistory = [...trimmed, { before, after }];
@@ -297,30 +344,55 @@ function addElements(newElements: ElementDto[], options?: { recordHistory?: bool
         return newHistory;
       });
     }
+
     return next;
   });
 }
-function deleteElements(
-  ids: number[],
-  options?: { recordHistory?: boolean },
-) {
-  setElements((prev) => {
+function addElements(newElements: BoardElementDto[], options?: { recordHistory?: boolean }) {
+  setElements(prev => {
     const before: ElementsState = {};
     const after: ElementsState = {};
-    prev.forEach((el) => {
-      if (ids.includes(el.id)) {
-        before[el.id] = el;
-      }
-    });
-    const next = prev.filter((el) => !ids.includes(el.id));
-    if (options?.recordHistory && Object.keys(before).length > 0) {
-      setHistory((prevHistory) => {
+
+    for (const el of newElements) {
+      after[el.id] = cloneElement(el);
+    }
+
+    const next = [...prev, ...newElements];
+
+    if (options?.recordHistory && Object.keys(after).length > 0) {
+      setHistory(prevHistory => {
         const trimmed = prevHistory.slice(0, historyIndex + 1);
         const newHistory = [...trimmed, { before, after }];
         setHistoryIndex(newHistory.length - 1);
         return newHistory;
       });
     }
+
+    return next;
+  });
+}
+function deleteElements(ids: number[], options?: { recordHistory?: boolean }) {
+  setElements(prev => {
+    const before: ElementsState = {};
+    const after: ElementsState = {};
+
+    for (const el of prev) {
+      if (ids.includes(el.id)) {
+        before[el.id] = cloneElement(el);
+      }
+    }
+
+    const next = prev.filter(el => !ids.includes(el.id));
+
+    if (options?.recordHistory && Object.keys(before).length > 0) {
+      setHistory(prevHistory => {
+        const trimmed = prevHistory.slice(0, historyIndex + 1);
+        const newHistory = [...trimmed, { before, after }];
+        setHistoryIndex(newHistory.length - 1);
+        return newHistory;
+      });
+    }
+
     return next;
   });
 }
@@ -407,6 +479,12 @@ const exportCrop = (format: 'png' | 'jpeg' | 'webp' = 'png') => {
   link.download = `board-fragment.${format}`;
   link.click();
 };
+function cloneElement(el: BoardElementDto): BoardElementDto {
+  return {
+    ...el,
+    properties: el.properties ? JSON.parse(JSON.stringify(el.properties)) : undefined,
+  };
+}
 const handleUploadMedia = async (file: File) => {
   try {
     if (!boardUuid || !board) return;
@@ -418,22 +496,22 @@ const handleUploadMedia = async (file: File) => {
     const scale = Math.min(1, maxW / width, maxH / height);
     width *= scale;
     height *= scale;
-    const el = await createElement(boardUuid, {
-      type: 'MEDIA',
-      x: 100,
-      y: 100,
-      width,
-      height,
-      rotation: 0,
-      properties: {
-        mediaId: data.id,
-        url: data.url,
-        mediaType: data.contentType?.startsWith('video/')
-          ? 'VIDEO'
-          : 'IMAGE',
-      },
-    });
-    setElements((prev) => [...prev, el]);
+const el = await createElement(boardUuid, {
+  type: 'MEDIA',
+  x: 100,
+  y: 100,
+  width,
+  height,
+  rotation: 0,
+  properties: {
+    mediaId: data.id,
+    url: data.url,
+    mediaType: data.contentType?.startsWith('video/')
+      ? 'VIDEO'
+      : 'IMAGE',
+  },
+});
+addElements([el], { recordHistory: true });
   } catch (err) {
     console.error('Failed to upload media', err);
   }
@@ -1496,7 +1574,13 @@ console.log('HISTORY', historyIndex, history);
       selectedElements: elements.filter((el) => selectedIds.includes(el.id)),
       boardTitle: board.title,
     }}
+    messages={aiMessages}
+    setMessages={setAiMessages}
     onClose={() => setAiChatOpen(false)}
+        position={aiDialogPosition}
+        setPosition={setAiDialogPosition}
+          size={aiSize}
+          setSize={setAiSize}
   />
 )}
   {saveMenuOpen && (
@@ -1584,6 +1668,7 @@ console.log('HISTORY', historyIndex, history);
           deleteElements={deleteElements}
           transformElementOnServer={transformElementOnServer}
           displayName={displayName}
+          getUserColor={getUserColor}
         />
       </div>
         {needName && (

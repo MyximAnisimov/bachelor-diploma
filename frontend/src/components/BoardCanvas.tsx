@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useLayoutEffect } from 'react';
-import { Stage, Layer, Rect, Transformer, Line, Group, Circle } from 'react-konva';
+import { Stage, Layer, Rect, Transformer, Line, Group, Circle, Text } from 'react-konva';
 import type { KonvaEventObject } from 'konva/lib/Node';
 import type { Dispatch, SetStateAction } from 'react';
 import type { BoardElementDto } from '../api/types';
@@ -47,6 +47,7 @@ interface Props {
     payload: ReturnType<typeof toUpdatePayload>,
   ) => Promise<BoardElementDto>;
 displayName: string;
+getUserColor: (clientId: string) => string;
 }
 
 interface ArrowProperties {
@@ -158,6 +159,7 @@ export const BoardCanvas: React.FC<Props> = ({
   deleteElements,
   transformElementOnServer,
   displayName,
+  getUserColor,
 }) => {
   const [selectionRect, setSelectionRect] = useState<SelectionRectState>({
     visible: false,
@@ -1218,15 +1220,88 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
           )}
 
         {!hideDuringExport && <InfiniteGrid step={20} extent={10000} />}
-        <Layer listening={false}>
-          {Object.entries(remoteCursors ?? {})
-            .filter(([id]) => id !== clientId)
-            .map(([id, pos]) => (
-              <Group key={id} x={pos.x} y={pos.y}>
-                <Circle radius={4} fill="red" />
-              </Group>
-            ))}
-        </Layer>
+<Layer listening={false}>
+  {Object.entries(remoteCursors).map(([id, cursor]) => {
+    if (id === clientId) return null;
+
+    const color = getUserColor(id);
+    const name = cursor.displayName || 'Гость';
+
+
+    const baseWidth = 8;
+    const height = 13;
+    const concaveDepth = 2;
+
+    const cursorShape = [
+      0, 0,
+      -baseWidth / 2, height - concaveDepth,
+      0, height,
+      baseWidth / 2, height - concaveDepth,
+      0, 0,
+    ];
+
+    const rotationDeg = -25;
+    const offsetX = 0;
+    const offsetY = -height * 0.1;
+
+
+    const labelOffsetX = 12;
+    const labelOffsetY = 8;
+    const labelPaddingX = 4;
+    const labelPaddingY = 2;
+
+    const approxTextWidth = Math.max(30, name.length * 6);
+    const labelWidth = approxTextWidth + labelPaddingX * 2;
+    const labelHeight = 14 + labelPaddingY * 2;
+
+    return (
+      <Group
+        key={id}
+        x={cursor.x + offsetX}
+        y={cursor.y + offsetY}
+        opacity={0.98}
+      >
+        <Group rotation={rotationDeg}>
+          <Line
+            points={cursorShape}
+            fill={color}
+            stroke={color}
+            strokeWidth={1}
+            closed
+            shadowColor="rgba(15,23,42,0.35)"
+            shadowBlur={3}
+            shadowOffset={{ x: 0, y: 1 }}
+            shadowOpacity={0.5}
+          />
+        </Group>
+
+        <Group x={labelOffsetX} y={labelOffsetY}>
+          <Rect
+            x={0}
+            y={0}
+            width={labelWidth}
+            height={labelHeight}
+            fill={color}
+            cornerRadius={999}
+            shadowColor="rgba(15,23,42,0.35)"
+            shadowBlur={3}
+            shadowOffset={{ x: 0, y: 1 }}
+            shadowOpacity={0.4}
+          />
+          <Text
+            x={labelPaddingX}
+            y={labelPaddingY}
+            text={name}
+            fontSize={10}
+            fontStyle="500"
+            fill="#ffffff"
+            listening={false}
+          />
+        </Group>
+      </Group>
+    );
+  })}
+</Layer>
 
         <Layer>
             {sortedElements.map((el) => {
@@ -1462,38 +1537,6 @@ const handleStageWheel = (e: KonvaEventObject<WheelEvent>) => {
     <button onClick={() => exportCrop('webp')}>Скачать WebP</button>
   </div>
 )}
-
-{Object.entries(remoteCursors)
-  .filter(([id]) => id !== clientId)
-  .map(([id, cursor]) => (
-    <div
-      key={id}
-      style={{
-        position: 'absolute',
-        left: cursor.x * stageScale + stagePos.x,
-        top: cursor.y * stageScale + stagePos.y,
-        pointerEvents: 'none',
-        transform: 'translate(-50%, -50%)',
-      }}
-    >
-      <div>▸</div>
-      {cursor.displayName && (
-        <div
-          style={{
-            marginTop: 2,
-            padding: '2px 4px',
-            background: 'rgba(0,0,0,0.7)',
-            color: '#fff',
-            borderRadius: 4,
-            fontSize: 12,
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {cursor.displayName}
-        </div>
-      )}
-    </div>
-  ))}
 
       {contextMenu.visible && selectedIds.length > 0 && (
         <div
