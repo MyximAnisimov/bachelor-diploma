@@ -1,8 +1,8 @@
 package com.example.demo.controller;
 
 import com.example.demo.dto.BoardDto;
-import com.example.demo.dto.CreateBoardRequest;
-import com.example.demo.dto.UpdateBoardRequest;
+import com.example.demo.dto.request.CreateBoardRequest;
+import com.example.demo.dto.request.UpdateBoardRequest;
 import com.example.demo.model.BoardAccessMode;
 import com.example.demo.service.BoardService;
 import jakarta.validation.Valid;

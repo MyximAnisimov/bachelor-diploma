@@ -27,12 +27,22 @@ export const TextElement: React.FC<Props> = ({
   const groupRef = useRef<any>(null);
 
   const props = element.properties || {};
-  const text: string = props.text || '';
-  const fontSize: number = props.fontSize || 18;
-  const color: string = props.color || '#000000';
+
+  const text = props.text ?? '';
+  const fontSize = Number(props.fontSize ?? 18);
+  const color = props.color ?? '#000000';
+  const fontFamily = props.fontFamily ?? 'Arial';
+  const fontStyle = props.fontStyle ?? 'normal';
+  const align = props.align ?? 'left';
+  const verticalAlign = props.verticalAlign ?? 'top';
+  const padding = Number(props.padding ?? 4);
+  const lineHeight = Number(props.lineHeight ?? 1.2);
+  const textDecoration = props.textDecoration ?? '';
+  const wrap = props.wrap ?? 'word';
 
   useEffect(() => {
     registerNode(groupRef.current);
+    return () => registerNode(null);
   }, [registerNode, element.id]);
 
   const handleDragEnd = (e: KonvaEventObject<DragEvent>) => {
@@ -67,7 +77,6 @@ export const TextElement: React.FC<Props> = ({
     });
   };
 
-
   return (
     <Group
       ref={groupRef}
@@ -95,10 +104,15 @@ export const TextElement: React.FC<Props> = ({
         width={element.width}
         height={element.height}
         fontSize={fontSize}
+        fontFamily={fontFamily}
+        fontStyle={fontStyle}
+        textDecoration={textDecoration}
         fill={color}
-        align="left"
-        verticalAlign="top"
-        padding={4}
+        align={align}
+        verticalAlign={verticalAlign}
+        padding={padding}
+        lineHeight={lineHeight}
+        wrap={wrap}
         listening={false}
       />
     </Group>

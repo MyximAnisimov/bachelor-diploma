@@ -1,8 +1,8 @@
 package com.example.demo.service;
 
 import com.example.demo.dto.BoardDto;
-import com.example.demo.dto.CreateBoardRequest;
-import com.example.demo.dto.UpdateBoardRequest;
+import com.example.demo.dto.request.CreateBoardRequest;
+import com.example.demo.dto.request.UpdateBoardRequest;
 import com.example.demo.model.Board;
 import com.example.demo.model.BoardAccessMode;
 import com.example.demo.model.User;
@@ -124,15 +124,9 @@ public class BoardServiceImpl implements BoardService {
         return toDto(saved);
     }
 
-//    public List<BoardDto> getBoardsForCurrentUser() {
-//        User currentUser = getCurrentUser();
-//        List<Board> boards = boardRepository.findAllByOwnerId(currentUser.getId());
-//        return boards.stream().map(this::toDto).toList();
-//    }
-
     @Override
     public BoardDto createBoard(CreateBoardRequest request) {
-        User currentUser = getCurrentUserOrNull();  // может вернуть null
+        User currentUser = getCurrentUserOrNull();
 
         Board board = new Board();
         board.setUuid(UUID.randomUUID());

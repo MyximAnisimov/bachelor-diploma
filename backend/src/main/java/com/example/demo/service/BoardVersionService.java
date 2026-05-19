@@ -151,17 +151,21 @@ public class BoardVersionService {
     public List<BoardElementDto> getVersionSnapshot(UUID boardUuid,
                                                     Long versionId,
                                                     Principal principal) throws Exception {
-        User currentUser = getCurrentUser(principal);
+        User currentUserOrNull = null;
+        if (principal != null) {
+            String email = principal.getName();
+            currentUserOrNull = userRepository.findByEmail(email).orElse(null);
+        }
+
         Board board = boardRepository.findByUuid(boardUuid)
                 .orElseThrow(() -> new IllegalArgumentException("Доска не найдена"));
 
-        if (!boardService.canView(board, currentUser)) {
+        if (!boardService.canView(board, currentUserOrNull)) {
             throw new SecurityException("Нет доступа к доске");
         }
 
         BoardVersion version = versionRepository.findById(versionId)
                 .orElseThrow(() -> new IllegalArgumentException("Версия не найдена"));
-
         if (!version.getBoard().getId().equals(board.getId())) {
             throw new IllegalArgumentException("Версия не принадлежит этой доске");
         }
@@ -172,7 +176,6 @@ public class BoardVersionService {
         }
 
         BoardSnapshot snapshot = objectMapper.readValue(json, BoardSnapshot.class);
-
         return snapshot.elements;
     }
 }

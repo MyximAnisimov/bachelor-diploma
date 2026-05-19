@@ -1,4 +1,4 @@
-package com.example.demo.dto;
+package com.example.demo.dto.request;
 
 import lombok.Getter;
 import lombok.Setter;
@@ -11,7 +11,5 @@ public class AiChatRequest {
     private String assistantId;
     private String boardUuid;
     private String message;
-    private Map<String, Object> context; // необязательно, но удобно
-
-    // геттеры/сеттеры
+    private Map<String, Object> context;
 }

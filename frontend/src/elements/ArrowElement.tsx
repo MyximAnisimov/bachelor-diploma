@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Arrow, Circle } from 'react-konva';
 import type { BoardElementDto } from '../../api/types';
 import type { KonvaEventObject } from 'konva/lib/Node';
-import { getRectAnchors, getElementAnchorWorldPoint } from '../utils/anchorUtils';
+import { getElementAnchorWorldPoint } from '../utils/anchorUtils';
 
 interface Props {
   element: BoardElementDto;
@@ -17,39 +17,30 @@ interface Props {
   stagePos: { x: number; y: number };
 }
 
-function getStickerAnchors(el: BoardElementDto) {
-  const w = el.width;
-  const h = el.height;
-  return [
-    { x: 0, y: 0 },
-    { x: w, y: 0 },
-    { x: w, y: h },
-    { x: 0, y: h },
-    { x: w / 2, y: 0 },
-    { x: w, y: h / 2 },
-    { x: w / 2, y: h },
-    { x: 0, y: h / 2 },
-  ];
-}
+const SNAP_RADIUS = 5;
 
-function getAnchorWorldPoint(el: BoardElementDto, anchorIndex: number) {
-  const anchors = getStickerAnchors(el);
-  const local =
-    anchors[anchorIndex] || { x: el.width / 2, y: el.height / 2 };
-  const angleRad = ((el.rotation || 0) * Math.PI) / 180;
-  const cos = Math.cos(angleRad);
-  const sin = Math.sin(angleRad);
-  const rotated = {
-    x: local.x * cos - local.y * sin,
-    y: local.x * sin + local.y * cos,
-  };
+const anchorableTypes = new Set([
+  'RECTANGLE',
+  'ELLIPSE',
+  'TRIANGLE',
+  'DIAMOND',
+  'STICKER',
+  'TEXT',
+  'MEDIA',
+]);
+
+function getPointerLogical(
+  stage: any,
+  stagePos: { x: number; y: number },
+  stageScale: number,
+) {
+  const p = stage.getPointerPosition();
+  if (!p) return null;
   return {
-    x: el.x + rotated.x,
-    y: el.y + rotated.y,
+    x: (p.x - stagePos.x) / stageScale,
+    y: (p.y - stagePos.y) / stageScale,
   };
 }
-
-const SNAP_RADIUS = 60;
 
 export const ArrowElement: React.FC<Props> = ({
   element,
@@ -59,194 +50,278 @@ export const ArrowElement: React.FC<Props> = ({
   onContextMenu,
   onChange,
   canEdit,
-  canDrag,
   stagePos,
-   stageScale,
+  stageScale,
 }) => {
-  const propsAny = (element.properties || {}) as any;
+  const p = (element.properties || {}) as any;
 
-  const fromId: number | undefined = propsAny.fromId;
-  const toId: number | undefined = propsAny.toId;
-  const fromAnchorIndex: number = propsAny.fromAnchorIndex ?? 0;
-  const toAnchorIndex: number = propsAny.toAnchorIndex ?? 0;
+  const fromId: number | undefined = p.fromId;
+  const toId: number | undefined = p.toId;
+  const fromAnchorIndex: number = p.fromAnchorIndex ?? 0;
+  const toAnchorIndex: number = p.toAnchorIndex ?? 0;
 
-  const x1: number | undefined = propsAny.x1;
-  const y1: number | undefined = propsAny.y1;
-  const x2: number | undefined = propsAny.x2;
-  const y2: number | undefined = propsAny.y2;
+  const color: string = p.color || '#000000';
+  const strokeWidth: number = p.strokeWidth || 2;
 
-  const hasFreeCoords =
-    typeof x1 === 'number' &&
-    typeof y1 === 'number' &&
-    typeof x2 === 'number' &&
-    typeof y2 === 'number';
+  const bendPoints: { x: number; y: number }[] = Array.isArray(p.bendPoints)
+    ? p.bendPoints
+    : [];
 
-  const color: string = propsAny.color || '#000000';
-  const strokeWidth: number = propsAny.strokeWidth || 2;
+  const fromEl = fromId != null ? allElements.find((el) => el.id === fromId) : null;
+  const toEl = toId != null ? allElements.find((el) => el.id === toId) : null;
 
-  let baseFromPoint: { x: number; y: number } | null = null;
-  let baseToPoint: { x: number; y: number } | null = null;
+  const baseFromPoint =
+    fromEl != null
+      ? getElementAnchorWorldPoint(fromEl, fromAnchorIndex)
+      : typeof p.x1 === 'number' && typeof p.y1 === 'number'
+      ? { x: p.x1, y: p.y1 }
+      : null;
 
-  if (fromId != null && toId != null) {
-    const fromEl = allElements.find((el) => el.id === fromId);
-    const toEl = allElements.find((el) => el.id === toId);
-    if (!fromEl || !toEl) {
-      return null;
-    }
-    baseFromPoint = getAnchorWorldPoint(fromEl, fromAnchorIndex);
-    baseToPoint = getAnchorWorldPoint(toEl, toAnchorIndex);
-  } else if (hasFreeCoords) {
-    baseFromPoint = { x: x1!, y: y1! };
-    baseToPoint = { x: x2!, y: y2! };
-  } else {
-    return null;
-  }
-
-  const handleRadius = 6;
-
-const getPointerLogical = (stage: any, stagePos: { x: number; y: number }, stageScale: number) => {
-  const p = stage.getPointerPosition();
-  if (!p) return null;
-  return {
-    x: (p.x - stagePos.x) / stageScale,
-    y: (p.y - stagePos.y) / stageScale,
-  };
-};
-
-const findNearestElementAnchor = (pos: { x: number; y: number }) => {
-  let bestElement: BoardElementDto | null = null;
-  let bestAnchorIdx = 0;
-  let bestDist2 = Infinity;
-
-  const candidates = allElements.filter((el) =>
-    anchorableTypes.has(el.type),
-  );
-
-  candidates.forEach((el) => {
-    const anchors = getRectAnchors(el);
-    anchors.forEach((_, idx) => {
-      const world = getElementAnchorWorldPoint(el, idx);
-      const dx = world.x - pos.x;
-      const dy = world.y - pos.y;
-      const d2 = dx * dx + dy * dy;
-      if (d2 < bestDist2) {
-        bestDist2 = d2;
-        bestElement = el;
-        bestAnchorIdx = idx;
-      }
-    });
-  });
-
-  if (!bestElement) return null;
-  if (bestDist2 > SNAP_RADIUS * SNAP_RADIUS) return null;
-
-  return { element: bestElement, anchorIndex: bestAnchorIdx };
-};
+  const baseToPoint =
+    toEl != null
+      ? getElementAnchorWorldPoint(toEl, toAnchorIndex)
+      : typeof p.x2 === 'number' && typeof p.y2 === 'number'
+      ? { x: p.x2, y: p.y2 }
+      : null;
 
   const [tempFromPoint, setTempFromPoint] = useState<{ x: number; y: number } | null>(null);
   const [tempToPoint, setTempToPoint] = useState<{ x: number; y: number } | null>(null);
+  const [tempBendPoints, setTempBendPoints] = useState<{ x: number; y: number }[] | null>(null);
 
-  const toLogical = (abs: { x: number; y: number }) => ({
-    x: (abs.x - stagePos.x) / stageScale,
-    y: (abs.y - stagePos.y) / stageScale,
-  });
+  if (!baseFromPoint || !baseToPoint) {
+    return null;
+  }
 
-const handleEndDragMove =
-  (kind: 'from' | 'to') =>
-  (e: KonvaEventObject<DragEvent>) => {
-    if (!canEdit) return;
-    const stage = e.target.getStage();
-    if (!stage) return;
+  const start = tempFromPoint ?? baseFromPoint;
+  const end = tempToPoint ?? baseToPoint;
+  const visibleBendPoints = tempBendPoints ?? bendPoints;
 
-    const pos = getPointerLogical(stage, stagePos, stageScale);
-    if (!pos) return;
+  const arrowPoints = useMemo(
+    () => [
+      start.x,
+      start.y,
+      ...visibleBendPoints.flatMap((pt) => [pt.x, pt.y]),
+      end.x,
+      end.y,
+    ],
+    [start, end, visibleBendPoints],
+  );
 
-    if (kind === 'from') {
-      setTempFromPoint({ x: pos.x, y: pos.y });
-    } else {
-      setTempToPoint({ x: pos.x, y: pos.y });
-    }
-  };
+function getAnchorIndicesForElement(el: BoardElementDto): number[] {
+  if (!anchorableTypes.has(el.type)) return [];
+  return [0, 1, 2, 3, 4, 5, 6, 7];
+}
 
-const handleEndDragEnd =
-  (kind: 'from' | 'to') =>
-  (e: KonvaEventObject<DragEvent>) => {
-    if (!canEdit) return;
-    const stage = e.target.getStage();
-    if (!stage) return;
-
-    const pos = getPointerLogical(stage, stagePos, stageScale);
-    if (!pos) return;
-
-    const nearest = findNearestStickerAnchor(pos);
-
-    if (kind === 'from') {
-      setTempFromPoint(null);
-    } else {
-      setTempToPoint(null);
-    }
-
-    const p = (element.properties || {}) as any;
-    const pHasFreeCoords =
-      typeof p.x1 === 'number' &&
-      typeof p.y1 === 'number' &&
-      typeof p.x2 === 'number' &&
-      typeof p.y2 === 'number';
-
-    if (!nearest) {
-      if (pHasFreeCoords) {
-        if (kind === 'from') {
-          onChange({
-            ...element,
-            properties: {
-              ...p,
-              x1: pos.x,
-              y1: pos.y,
-            },
-          });
-        } else {
-          onChange({
-            ...element,
-            properties: {
-              ...p,
-              x2: pos.x,
-              y2: pos.y,
-            },
-          });
-        }
+const findNearestFigureAnchor = (
+  point: { x: number; y: number },
+  excludeElementId?: number,
+) => {
+  let best:
+    | {
+        element: BoardElementDto;
+        anchorIndex: number;
+        point: { x: number; y: number };
+        distance: number;
       }
-      return;
+    | null = null;
+
+  for (const candidate of allElements) {
+    if (candidate.id == null) continue;
+    if (candidate.id === excludeElementId) continue;
+    if (!anchorableTypes.has(candidate.type)) continue;
+
+    const anchorIndices = getAnchorIndicesForElement(candidate);
+
+    for (const idx of anchorIndices) {
+      const anchorPoint = getElementAnchorWorldPoint(candidate, idx);
+      const dx = anchorPoint.x - point.x;
+      const dy = anchorPoint.y - point.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      if (!best || distance < best.distance) {
+        best = {
+          element: candidate,
+          anchorIndex: idx,
+          point: anchorPoint,
+          distance,
+        };
+      }
+    }
+  }
+
+  if (!best) return null;
+  if (best.distance > SNAP_RADIUS) return null;
+  return best;
+};
+
+  const commitEndpoint = (
+    kind: 'from' | 'to',
+    payload:
+      | { mode: 'free'; x: number; y: number }
+      | { mode: 'anchor'; elementId: number; anchorIndex: number },
+  ) => {
+    const next = { ...p };
+
+    if (kind === 'from') {
+      if (payload.mode === 'free') {
+        delete next.fromId;
+        delete next.fromAnchorIndex;
+        next.x1 = payload.x;
+        next.y1 = payload.y;
+      } else {
+        next.fromId = payload.elementId;
+        next.fromAnchorIndex = payload.anchorIndex;
+        delete next.x1;
+        delete next.y1;
+      }
+    } else {
+      if (payload.mode === 'free') {
+        delete next.toId;
+        delete next.toAnchorIndex;
+        next.x2 = payload.x;
+        next.y2 = payload.y;
+      } else {
+        next.toId = payload.elementId;
+        next.toAnchorIndex = payload.anchorIndex;
+        delete next.x2;
+        delete next.y2;
+      }
     }
 
-    const { sticker, anchorIndex } = nearest;
-    if (kind === 'from') {
-      onChange({
-        ...element,
-        properties: {
-          ...p,
-          fromId: sticker.id,
-          fromAnchorIndex: anchorIndex,
-        },
-      });
-    } else {
-      onChange({
-        ...element,
-        properties: {
-          ...p,
-          toId: sticker.id,
-          toAnchorIndex: anchorIndex,
-        },
-      });
-    }
+    onChange({
+      ...element,
+      properties: next,
+    });
   };
 
-  const start = tempFromPoint ?? baseFromPoint!;
-  const end = tempToPoint ?? baseToPoint!;
+  const handleEndDragMove =
+    (kind: 'from' | 'to') =>
+    (e: KonvaEventObject<DragEvent>) => {
+      if (!canEdit) return;
+
+      const stage = e.target.getStage();
+      if (!stage) return;
+
+      const pos = getPointerLogical(stage, stagePos, stageScale);
+      if (!pos) return;
+
+      const nearest = findNearestFigureAnchor(pos, element.id);
+      const snappedPoint = nearest ? nearest.point : pos;
+
+      if (kind === 'from') {
+        setTempFromPoint(snappedPoint);
+      } else {
+        setTempToPoint(snappedPoint);
+      }
+    };
+
+  const handleEndDragEnd =
+    (kind: 'from' | 'to') =>
+    (e: KonvaEventObject<DragEvent>) => {
+      if (!canEdit) return;
+
+      const stage = e.target.getStage();
+      if (!stage) return;
+
+      const pos = getPointerLogical(stage, stagePos, stageScale);
+      if (!pos) return;
+
+      const nearest = findNearestFigureAnchor(pos, element.id);
+
+      if (kind === 'from') {
+        setTempFromPoint(null);
+      } else {
+        setTempToPoint(null);
+      }
+
+      if (nearest) {
+        commitEndpoint(kind, {
+          mode: 'anchor',
+          elementId: nearest.element.id!,
+          anchorIndex: nearest.anchorIndex,
+        });
+        return;
+      }
+
+      commitEndpoint(kind, {
+        mode: 'free',
+        x: pos.x,
+        y: pos.y,
+      });
+    };
+
+  const handleArrowDoubleClick = (e: KonvaEventObject<MouseEvent>) => {
+    if (!canEdit) return;
+
+    const stage = e.target.getStage();
+    if (!stage) return;
+
+    const pos = getPointerLogical(stage, stagePos, stageScale);
+    if (!pos) return;
+
+    onChange({
+      ...element,
+      properties: {
+        ...p,
+        bendPoints: [...bendPoints, { x: pos.x, y: pos.y }],
+      },
+    });
+  };
+
+  const handleBendDragMove =
+    (idx: number) =>
+    (e: KonvaEventObject<DragEvent>) => {
+      if (!canEdit) return;
+
+      const stage = e.target.getStage();
+      if (!stage) return;
+
+      const pos = getPointerLogical(stage, stagePos, stageScale);
+      if (!pos) return;
+
+      const next = [...(tempBendPoints ?? bendPoints)];
+      next[idx] = pos;
+      setTempBendPoints(next);
+    };
+
+  const handleBendDragEnd =
+    (idx: number) =>
+    (e: KonvaEventObject<DragEvent>) => {
+      if (!canEdit) return;
+
+      const stage = e.target.getStage();
+      if (!stage) return;
+
+      const pos = getPointerLogical(stage, stagePos, stageScale);
+      if (!pos) return;
+
+      const next = [...(tempBendPoints ?? bendPoints)];
+      next[idx] = pos;
+      setTempBendPoints(null);
+
+      onChange({
+        ...element,
+        properties: {
+          ...p,
+          bendPoints: next,
+        },
+      });
+    };
+
+  const removeBendPoint = (idx: number) => {
+    onChange({
+      ...element,
+      properties: {
+        ...p,
+        bendPoints: bendPoints.filter((_: any, i: number) => i !== idx),
+      },
+    });
+  };
 
   return (
     <>
       <Arrow
-        points={[start.x, start.y, end.x, end.y]}
+        points={arrowPoints}
         stroke={isSelected ? '#00a1ff' : color}
         fill={isSelected ? '#00a1ff' : color}
         strokeWidth={strokeWidth}
@@ -257,50 +332,16 @@ const handleEndDragEnd =
         onClick={onClick}
         onTap={onClick}
         onContextMenu={onContextMenu}
-        draggable={canDrag}
-        onDragEnd={(e) => {
-          if (!canDrag) return;
-          const node = e.target;
-          const dx = node.x();
-          const dy = node.y();
-
-          const p = (element.properties || {}) as any;
-          const pHasFreeCoords =
-            typeof p.x1 === 'number' &&
-            typeof p.y1 === 'number' &&
-            typeof p.x2 === 'number' &&
-            typeof p.y2 === 'number';
-
-          if (pHasFreeCoords) {
-            const updated: BoardElementDto = {
-              ...element,
-              properties: {
-                ...p,
-                x1: p.x1 + dx,
-                y1: p.y1 + dy,
-                x2: p.x2 + dx,
-                y2: p.y2 + dy,
-              },
-            };
-            node.position({ x: 0, y: 0 });
-            onChange(updated);
-          } else {
-            const updated: BoardElementDto = {
-              ...element,
-              x: (element.x || 0) + dx,
-              y: (element.y || 0) + dy,
-            };
-            node.position({ x: 0, y: 0 });
-            onChange(updated);
-          }
-        }}
+        onDblClick={handleArrowDoubleClick}
+        onDblTap={handleArrowDoubleClick}
       />
+
       {canEdit && isSelected && (
         <>
           <Circle
             x={start.x}
             y={start.y}
-            radius={handleRadius}
+            radius={6}
             fill="white"
             stroke="#00a1ff"
             strokeWidth={2}
@@ -308,10 +349,11 @@ const handleEndDragEnd =
             onDragMove={handleEndDragMove('from')}
             onDragEnd={handleEndDragEnd('from')}
           />
+
           <Circle
             x={end.x}
             y={end.y}
-            radius={handleRadius}
+            radius={6}
             fill="white"
             stroke="#00a1ff"
             strokeWidth={2}
@@ -319,6 +361,23 @@ const handleEndDragEnd =
             onDragMove={handleEndDragMove('to')}
             onDragEnd={handleEndDragEnd('to')}
           />
+
+          {visibleBendPoints.map((pt, idx) => (
+            <Circle
+              key={idx}
+              x={pt.x}
+              y={pt.y}
+              radius={6}
+              fill="white"
+              stroke="#00a1ff"
+              strokeWidth={2}
+              draggable
+              onDragMove={handleBendDragMove(idx)}
+              onDragEnd={handleBendDragEnd(idx)}
+              onDblClick={() => removeBendPoint(idx)}
+              onDblTap={() => removeBendPoint(idx)}
+            />
+          ))}
         </>
       )}
     </>

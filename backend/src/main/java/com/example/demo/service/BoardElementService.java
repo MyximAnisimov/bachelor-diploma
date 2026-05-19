@@ -1,6 +1,17 @@
 package com.example.demo.service;
 
 import com.example.demo.dto.*;
+import com.example.demo.dto.request.BoardElementCreateRequest;
+import com.example.demo.dto.request.BoardElementUpdateRequest;
+import com.example.demo.dto.request.CopyElementsRequest;
+import com.example.demo.dto.request.ElementLockRequest;
+import com.example.demo.dto.request.ElementTransformRequest;
+import com.example.demo.dto.request.GroupElementsRequest;
+import com.example.demo.dto.request.ReorderElementsRequest;
+import com.example.demo.dto.request.UngroupElementsRequest;
+import com.example.demo.dto.response.CopyElementsResponse;
+import com.example.demo.dto.response.GroupElementsResponse;
+
 import java.util.List;
 import java.util.UUID;
 

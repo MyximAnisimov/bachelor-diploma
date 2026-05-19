@@ -1,11 +1,15 @@
-package com.example.demo.dto;
+package com.example.demo.dto.request;
 
+import com.example.demo.model.BoardElement.ElementType;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 @Data
-public class ElementTransformRequest {
+public class BoardElementCreateRequest {
+
+    @NotNull
+    private ElementType type;
 
     @NotNull
     private Double x;
@@ -19,10 +23,13 @@ public class ElementTransformRequest {
     @NotNull
     private Double height;
 
-    @NotNull
     private Double rotation;
 
-    private JsonNode properties;
+    private Integer zIndex;
 
-    private String clientId;
+    private String groupId;
+
+    private Long mediaId;
+
+    private JsonNode properties;
 }

@@ -13,6 +13,7 @@ import { api } from '../api/http';
 import { useBoardWebRTC } from '../webrtc/useBoardWebRtc';
 import { WebRTCRoom } from '../webrtc/WebRTCRoom';
 import { fetchAssistants } from '../api/ai';
+import { deleteElement as apiDeleteElement } from '../api/elements';
 import {
   fetchBoardVersions,
   createBoardVersion,
@@ -43,6 +44,19 @@ type ShapeKind =
   | 'CYLINDER'
   | 'CIRCLE'
   | 'OVAL';
+
+type CreateElementRequest = {
+  type: BoardElementDto['type'];
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+  zIndex: number;
+  groupId?: number | null;
+  mediaId?: number | null;
+  properties: BoardElementDto['properties'];
+};
 
 type AiMessage = {
   role: 'user' | 'assistant';
@@ -104,6 +118,23 @@ export const BoardPage: React.FC = () => {
   const [showUuidNotice, setShowUuidNotice] = useState(false);
   const [showCopyToast, setShowCopyToast] = useState(false);
   const [aiSize, setAiSize] = useState({ width: 520, height: 520 });
+  const [userNames, setUserNames] = useState<Record<string, string>>({});
+  const [accessDenied, setAccessDenied] = useState(false);
+  const [accessDeniedStatus, setAccessDeniedStatus] = useState<number | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const getUserName = (id: string) =>
+    remoteCursors[id]?.displayName || 'Гость';
+    const selectedVersion = versions.find(v => v.id === selectedVersionId);
+    const label = selectedVersion?.label || `версия #${selectedVersionId}`;
+    const historyRef = useRef<HistoryEntry[]>([]);
+    const historyIndexRef = useRef<number>(-1);
+    const elementsRef = useRef<BoardElementDto[]>([]);
+      const [history, setHistory] = useState<HistoryEntry[]>([]);
+      const [historyIndex, setHistoryIndex] = useState<number>(-1);
+      const canUndo = historyIndex >= 0;
+      const canRedo = historyIndex < history.length - 1;
+      const showHistoryControls = !!board;
+      const [copied, setCopied] = useState(false);
   const {
     localStream,
     remoteStreams,
@@ -128,14 +159,47 @@ const cursorColors = [
 ];
 const readyForCall = !!board && !mediaError;
 async function syncUndoEntryToServer(entry: HistoryEntry) {
-  const elementsToSave = Object.values(entry.before ?? {});
-  await Promise.all(
-    elementsToSave.map((el) =>
-      transformElement(board.uuid, el.id, toUpdatePayload(el)).catch((err) => {
-        console.error('Failed to sync undo element', el.id, err);
+  const beforeIds = Object.keys(entry.before || {});
+  const afterIds = Object.keys(entry.after || {});
+
+
+  console.log('[syncUndo] beforeIds', beforeIds, 'afterIds', afterIds);
+  if (beforeIds.length === 0 && afterIds.length > 0) {
+    await Promise.all(
+      afterIds.map((idStr) => {
+        const id = Number(idStr);
+        return apiDeleteElement(board.uuid, id).catch((err) => {
+          console.error('Failed to sync undo ADD (delete)', id, err);
+        });
       }),
-    ),
-  );
+    );
+    return;
+  }
+
+  if (beforeIds.length > 0 && afterIds.length === 0) {
+    const elementsToRestore = Object.values(entry.before);
+    await Promise.all(
+      elementsToRestore.map((el) =>
+        createElement(board.uuid, toCreatePayload(el)).catch((err) => {
+          console.error('Failed to sync undo DELETE (restore)', el.id, err);
+        }),
+      ),
+    );
+    return;
+  }
+
+  if (beforeIds.length > 0 && afterIds.length > 0) {
+    const elementsToRevert = Object.values(entry.before);
+    await Promise.all(
+      elementsToRevert.map((el) =>
+        transformElement(board.uuid, el.id, toUpdatePayload(el)).catch(
+          (err) => {
+            console.error('Failed to sync undo UPDATE', el.id, err);
+          },
+        ),
+      ),
+    );
+  }
 }
 function getUserColor(clientId: string) {
   let hash = 0;
@@ -145,6 +209,40 @@ function getUserColor(clientId: string) {
   const idx = Math.abs(hash) % cursorColors.length;
   return cursorColors[idx];
 }
+useEffect(() => {
+  let canceled = false;
+
+  const loadBoard = async () => {
+    try {
+      setLoading(true);
+      const data = await getBoard(boardUuid);
+      if (canceled) return;
+      setBoard(data);
+    } catch (err: any) {
+              if (canceled) return;
+
+              const status = err?.response?.status;
+              console.error('loadBoard error', status, err);
+
+              if (status === 401 || status === 403) {
+                console.log('ACCESS DENIED: setting accessDenied = true');
+                setAccessDenied(true);
+                 setAccessDeniedStatus(status ?? null);
+              } else {
+                setLoadError('Не удалось загрузить доску');
+              }
+    } finally {
+      if (!canceled) {
+        setLoading(false);
+      }
+    }
+  };
+
+  loadBoard();
+  return () => {
+    canceled = true;
+  };
+}, [boardUuid]);
 
 useEffect(() => {
   if (!boardUuid) return;
@@ -173,8 +271,8 @@ function undo() {
   const entry = history[historyIndex];
   if (!entry) return;
 
-  setElements(prev => {
-    const map = new Map(prev.map(e => [e.id, e]));
+  setElements((prev) => {
+    const map = new Map(prev.map((e) => [e.id, e]));
     const beforeIds = Object.keys(entry.before);
     const afterIds = Object.keys(entry.after);
 
@@ -196,25 +294,20 @@ function undo() {
     return Array.from(map.values());
   });
 
-  setHistoryIndex(idx => idx - 1);
-}
-async function syncRedoEntryToServer(entry: HistoryEntry) {
-  const elementsToSave = Object.values(entry.after ?? {});
-  await Promise.all(
-    elementsToSave.map((el) =>
-      transformElement(board.uuid, el.id, toUpdatePayload(el)).catch((err) => {
-        console.error('Failed to sync redo element', el.id, err);
-      }),
-    ),
+  syncUndoEntryToServer(entry).catch((err) =>
+    console.error('Failed to sync undo', err),
   );
+
+  setHistoryIndex((idx) => idx - 1);
 }
+
 function redo() {
   if (!canRedo) return;
   const entry = history[historyIndex + 1];
   if (!entry) return;
 
-  setElements(prev => {
-    const map = new Map(prev.map(e => [e.id, e]));
+  setElements((prev) => {
+    const map = new Map(prev.map((e) => [e.id, e]));
     const beforeIds = Object.keys(entry.before);
     const afterIds = Object.keys(entry.after);
 
@@ -236,7 +329,52 @@ function redo() {
     return Array.from(map.values());
   });
 
-  setHistoryIndex(idx => idx + 1);
+  syncRedoEntryToServer(entry).catch((err) =>
+    console.error('Failed to sync redo', err),
+  );
+
+  setHistoryIndex((idx) => idx + 1);
+}
+async function syncRedoEntryToServer(entry: HistoryEntry) {
+  const beforeIds = Object.keys(entry.before || {});
+  const afterIds = Object.keys(entry.after || {});
+
+  if (beforeIds.length === 0 && afterIds.length > 0) {
+    const elementsToAdd = Object.values(entry.after);
+    await Promise.all(
+      elementsToAdd.map((el) =>
+        createElement(board.uuid, toCreatePayload(el)).catch((err) => {
+          console.error('Failed to sync redo ADD (create)', el.id, err);
+        }),
+      ),
+    );
+    return;
+  }
+
+  if (beforeIds.length > 0 && afterIds.length === 0) {
+    await Promise.all(
+      beforeIds.map((idStr) => {
+        const id = Number(idStr);
+        return apiDeleteElement(board.uuid, id).catch((err) => {
+          console.error('Failed to sync redo DELETE', id, err);
+        });
+      }),
+    );
+    return;
+  }
+
+  if (beforeIds.length > 0 && afterIds.length > 0) {
+    const elementsToApply = Object.values(entry.after);
+    await Promise.all(
+      elementsToApply.map((el) =>
+        transformElement(board.uuid, el.id, toUpdatePayload(el)).catch(
+          (err) => {
+            console.error('Failed to sync redo UPDATE', el.id, err);
+          },
+        ),
+      ),
+    );
+  }
 }
 
 async function handlePreviewVersion() {
@@ -253,17 +391,46 @@ function handleExitPreviewVersion() {
 
 async function handleSaveCurrentVersion() {
   if (!boardUuid) return;
-  const label = window.prompt('Название версии (опционально):') || undefined;
+
+  const raw = window.prompt('Название версии (опционально):');
+  if (raw === null) return;
+
+  const label = raw.trim() || undefined;
+
   setCreatingVersion(true);
   try {
     await createBoardVersion(boardUuid, label);
     const data = await fetchBoardVersions(boardUuid);
-    setVersions(data);
+    setVersions(Array.isArray(data) ? data : []);
+  } catch (e: any) {
+    console.error('Failed to save board version', e);
+
+    const status = e?.response?.status ?? e?.status;
+    if (status === 401) {
+      alert('Для сохранения глобальной версии доски нужно войти в аккаунт.');
+      return;
+    }
+
+    alert('Не удалось сохранить версию доски');
   } finally {
     setCreatingVersion(false);
   }
 }
 
+function toCreatePayload(el: BoardElementDto): CreateElementRequest {
+  return {
+    type: el.type,
+    x: el.x,
+    y: el.y,
+    width: el.width,
+    height: el.height,
+    rotation: el.rotation,
+    zIndex: el.zIndex,
+    groupId: el.groupId ?? null,
+    mediaId: el.mediaId ?? null,
+    properties: el.properties,
+  };
+}
 function toUpdatePayload(el: BoardElementDto) {
   return {
     type: el.type,
@@ -278,26 +445,30 @@ function toUpdatePayload(el: BoardElementDto) {
     properties: el.properties,
   };
 }
-  useEffect(() => {
-      console.log('BoardPage mount, boardUuid =', boardUuid);
-      console.log('BoardPage user/board', { currentUser, ownerId: board?.ownerId });
-    if (!boardUuid) return;
-    (async () => {
-      try {
-          console.log('Fetching board and elements for', boardUuid);
-        const [b, els] = await Promise.all([
-          getBoard(boardUuid),
-          getBoardElements(boardUuid),
-        ]);
-         console.log('Fetched board', b);
-          console.log('Fetched elements', els.length);
-        setBoard(b);
-        setElements(els);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [boardUuid]);
+useEffect(() => {
+  if (!boardUuid) return;
+  if (accessDenied) return;
+
+  let canceled = false;
+
+  const loadElements = async () => {
+    try {
+      console.log('Loading elements for board', boardUuid);
+      const els = await getBoardElements(boardUuid);
+      if (canceled) return;
+      setElements(els);
+      console.log('Loaded elements', els.length);
+    } catch (err) {
+      console.error('Failed to load elements', err);
+    }
+  };
+
+  loadElements();
+
+  return () => {
+    canceled = true;
+  };
+}, [boardUuid, accessDenied]);
 const handleAddRect = async () => {
   if (!boardUuid) return;
   const el = await createElement(boardUuid, {
@@ -319,81 +490,130 @@ function applyElementChanges(
   changes: { id: number; patch: Partial<BoardElementDto> }[],
   options?: { recordHistory?: boolean },
 ) {
-  setElements(prev => {
-    const map = new Map(prev.map(e => [e.id, e]));
-    const before: ElementsState = {};
-    const after: ElementsState = {};
+  const prev = elementsRef.current;
+  const map = new Map(prev.map(e => [e.id, e]));
 
-    for (const { id, patch } of changes) {
-      const current = map.get(id);
-      if (!current) continue;
+  const before: ElementsState = {};
+  const after: ElementsState = {};
 
-      before[id] = cloneElement(current);
-      const updated: BoardElementDto = { ...current, ...patch };
-      map.set(id, updated);
-      after[id] = cloneElement(updated);
-    }
+  for (const { id, patch } of changes) {
+    const current = map.get(id);
+    if (!current) continue;
 
-    const next = Array.from(map.values());
+    before[id] = cloneElement(current);
+    const updated: BoardElementDto = { ...current, ...patch };
+    map.set(id, updated);
+    after[id] = cloneElement(updated);
+  }
 
-    if (options?.recordHistory && Object.keys(before).length > 0) {
-      setHistory(prevHistory => {
-        const trimmed = prevHistory.slice(0, historyIndex + 1);
-        const newHistory = [...trimmed, { before, after }];
-        setHistoryIndex(newHistory.length - 1);
-        return newHistory;
-      });
-    }
+  const next = Array.from(map.values());
+  setElements(next);
+  elementsRef.current = next;
 
-    return next;
+  if (options?.recordHistory && Object.keys(before).length > 0) {
+    pushHistoryEntry({ before, after });
+  }
+}
+    useEffect(() => {
+      historyRef.current = history;
+    }, [history]);
+
+    useEffect(() => {
+      historyIndexRef.current = historyIndex;
+    }, [historyIndex]);
+
+    useEffect(() => {
+      elementsRef.current = elements;
+    }, [elements]);
+function pushHistoryEntry(entry: HistoryEntry) {
+  setHistory(prevHistory => {
+    const trimmed = prevHistory.slice(0, historyIndexRef.current + 1);
+    const newHistory = [...trimmed, entry];
+    historyIndexRef.current = newHistory.length - 1;
+    setHistoryIndex(newHistory.length - 1);
+    return newHistory;
   });
 }
-function addElements(newElements: BoardElementDto[], options?: { recordHistory?: boolean }) {
+function applyRemoteUpsert(newElements: BoardElementDto[]) {
   setElements(prev => {
-    const before: ElementsState = {};
-    const after: ElementsState = {};
-
+    const map = new Map<number, BoardElementDto>();
+    for (const el of prev) {
+      map.set(el.id, el);
+    }
     for (const el of newElements) {
-      after[el.id] = cloneElement(el);
+      map.set(el.id, cloneElement(el));
     }
-
-    const next = [...prev, ...newElements];
-
-    if (options?.recordHistory && Object.keys(after).length > 0) {
-      setHistory(prevHistory => {
-        const trimmed = prevHistory.slice(0, historyIndex + 1);
-        const newHistory = [...trimmed, { before, after }];
-        setHistoryIndex(newHistory.length - 1);
-        return newHistory;
-      });
-    }
-
-    return next;
+    return Array.from(map.values());
   });
+}
+
+function applyRemoteDelete(ids: number[]) {
+  setElements(prev => prev.filter(el => !ids.includes(el.id)));
+}
+
+function addElements(
+  newElements: BoardElementDto[],
+  options?: { recordHistory?: boolean },
+) {
+  const prev = elementsRef.current;
+
+  const map = new Map<number, BoardElementDto>();
+  for (const el of prev) {
+    map.set(el.id, el);
+  }
+
+  const before: ElementsState = {};
+  const after: ElementsState = {};
+
+  for (const el of newElements) {
+    const existing = map.get(el.id);
+
+    if (existing) {
+      continue;
+    }
+
+    const cloned = cloneElement(el);
+    map.set(el.id, cloned);
+    after[el.id] = cloneElement(cloned);
+  }
+
+  const next = Array.from(map.values());
+  setElements(next);
+  elementsRef.current = next;
+
+  if (options?.recordHistory && Object.keys(after).length > 0) {
+    console.log('[addElements] push history entry', {
+      before: Object.keys(before),
+      after: Object.keys(after),
+    });
+    pushHistoryEntry({ before, after });
+  }
 }
 function deleteElements(ids: number[], options?: { recordHistory?: boolean }) {
-  setElements(prev => {
-    const before: ElementsState = {};
-    const after: ElementsState = {};
+  if (!boardUuid) return;
 
-    for (const el of prev) {
-      if (ids.includes(el.id)) {
-        before[el.id] = cloneElement(el);
-      }
+  const prev = elementsRef.current;
+  const before: ElementsState = {};
+  const after: ElementsState = {};
+
+  for (const el of prev) {
+    if (ids.includes(el.id)) {
+      before[el.id] = cloneElement(el);
     }
+  }
 
-    const next = prev.filter(el => !ids.includes(el.id));
+  const next = prev.filter(el => !ids.includes(el.id));
+  setElements(next);
+  elementsRef.current = next;
 
-    if (options?.recordHistory && Object.keys(before).length > 0) {
-      setHistory(prevHistory => {
-        const trimmed = prevHistory.slice(0, historyIndex + 1);
-        const newHistory = [...trimmed, { before, after }];
-        setHistoryIndex(newHistory.length - 1);
-        return newHistory;
-      });
-    }
+  if (options?.recordHistory && Object.keys(before).length > 0) {
+    pushHistoryEntry({ before, after });
+  }
 
-    return next;
+  ids.forEach(id => {
+    apiDeleteElement(board.uuid, id).catch(err => {
+      console.error('Failed to delete element on server', id, err);
+    });
   });
 }
 function handleStartVideoConference() {
@@ -427,8 +647,7 @@ async function transformElementOnServer(
   el: BoardElementDto,
 ): Promise<BoardElementDto> {
   const payload = toUpdatePayload(el);
-  const saved = await transformElement(boardUuid, elementId, payload);
-  return saved;
+  return transformElement(boardUuid, elementId, payload);
 }
 const handleExportBoardFile = () => {
   if (!board) return;
@@ -523,7 +742,6 @@ addElements([el], { recordHistory: true });
   const [displayName, setDisplayName] = useState('');
   const [needName, setNeedName] = useState(false);
   useEffect(() => {
-    console.log('EFFECT currentUser', currentUser);
 
     if (currentUser) {
       const nameFromAccount =
@@ -533,7 +751,6 @@ addElements([el], { recordHistory: true });
         '';
 
       if (nameFromAccount) {
-        console.log('SET NAME FROM ACCOUNT', nameFromAccount);
         setDisplayName(nameFromAccount);
         localStorage.setItem('displayName', nameFromAccount);
         setNeedName(false);
@@ -544,20 +761,15 @@ addElements([el], { recordHistory: true });
     const stored = localStorage.getItem('displayName') || '';
 
     if (stored) {
-      console.log('SET NAME FROM LOCALSTORAGE', stored);
       setDisplayName(stored);
       setNeedName(false);
     } else {
-      console.log('NO NAME ANYWHERE, NEED NAME TRUE');
       setDisplayName('');
       setNeedName(true);
     }
   }, [currentUser]);
 
-console.log('INIT displayName', displayName, 'currentUser', currentUser);
-console.log('INIT needName', needName);
   const handleSaveName = () => {
-      console.log('EFFECT currentUser', currentUser);
     const trimmed = displayName.trim();
     if (!trimmed) return;
 
@@ -569,6 +781,34 @@ console.log('INIT needName', needName);
       setShowUuidNotice(true);
     }
   };
+
+const handleRequestRestore = () => {
+  if (!selectedVersionId) {
+    alert('Версия не выбрана');
+    return;
+  }
+
+  const version = versions.find((v) => v.id === selectedVersionId);
+  const label = version?.label || `версия #${selectedVersionId}`;
+
+  const payload = {
+    versionId: selectedVersionId,
+    label,
+    requestedBy: currentUser
+      ? { id: currentUser.id, name: currentUser.name }
+      : { id: null, name: 'Гость' },
+    requestedByClientId: clientId,
+  };
+
+  console.log('handleRequestRestore payload', payload);
+
+  sendStateRef.current?.({
+    type: 'VERSION_RESTORE_REQUEST',
+    payload,
+  });
+
+  setVersionRequestSent(true);
+};
 
 const toolbarButtonStyle = (active: boolean): React.CSSProperties => ({
   width: 40,
@@ -584,37 +824,47 @@ const toolbarButtonStyle = (active: boolean): React.CSSProperties => ({
   boxSizing: 'border-box',
 });
 useBoardWs({
-  boardUuid,
-  onLockMessage: (msg) => {
-    console.log('LOCK MSG IN BoardPage', msg);
-    const { elementIds, clientId: owner, action, success, error } = msg;
-    if (success === false) {
-      if (owner === clientId) {
-        console.warn(
-          'Не удалось захватить элементы, уже заняты другим пользователем:',
-          elementIds,
-          error ?? '',
-        );
-        setSelectedIds((prev) => prev.filter((id) => !elementIds.includes(id)));
+    boardUuid,
+    onLockMessage: (msg) => {
+      const { elementIds, clientId, action, displayName } = msg;
+
+      if (displayName) {
+        setUserNames((prev) => ({
+          ...prev,
+          [clientId]: displayName,
+        }));
       }
+
+      setLocks((prev) => {
+        const copy: Record<number, string> = { ...prev };
+        const ids: number[] = elementIds ?? [];
+
+        if (action === 'LOCK') {
+          ids.forEach((id) => {
+            copy[id] = clientId;
+          });
+        } else if (action === 'UNLOCK') {
+          ids.forEach((id) => {
+            delete copy[id];
+          });
+        }
+
+        return copy;
+      });
+    },
+  onVersionRestoreRejected: (payload) => {
+    const { versionId, label, requestedByClientId } = payload;
+    console.log('REJECTED payload', payload, 'my clientId', clientId);
+
+    if (requestedByClientId !== clientId) {
       return;
     }
-    setLocks((prev) => {
-      const copy: Record<number, string> = { ...prev };
-      const ids = elementIds ?? [];
-      if (action === 'LOCK') {
-        ids.forEach((id: number) => {
-          copy[id] = owner;
-        });
-      } else if (action === 'UNLOCK') {
-        ids.forEach((id: number) => {
-          if (copy[id] === owner) {
-            delete copy[id];
-          }
-        });
-      }
-      return copy;
-    });
+
+    alert(
+      `Владелец доски отклонил запрос на откат к версии ${
+        label || ('#' + versionId)
+      }.`,
+    );
   },
   onCursorMessage: (msg) => {
     const { clientId, x, y, displayName } = msg;
@@ -624,23 +874,11 @@ useBoardWs({
     }));
   },
     onElementMessage: (msg) => {
-      console.log('WS ELEMENT MSG', msg);
-      setElements((prev) => {
-        if (msg.action === 'DELETE') {
-          return prev.filter((el) => el.id !== msg.element.id);
-        }
-        const exists = prev.some((el) => el.id === msg.element.id);
-        if (exists) {
-          return prev.map((el) =>
-            el.id === msg.element.id ? msg.element : el,
-          );
-        }
-        return [...prev, msg.element];
-      });
-    },
-    onBoardResetMessage: (elementsFromServer) => {
-      replaceAllElementsAndResetHistory(elementsFromServer);
-      setSelectedIds([]);
+      if (msg.action === 'UPSERT') {
+        applyRemoteUpsert([msg.element]);
+      } else if (msg.action === 'DELETE') {
+        applyRemoteDelete([msg.element.id]);
+      }
     },
   onCallMessage: (msg: CallSignalMessage) => {
     if (msg.type === 'CALL_STARTED' && msg.boardUuid === board.uuid) {
@@ -663,32 +901,35 @@ useBoardWs({
   setSendCall: (fn) => {
     sendCallRef.current = fn;
   },
-  onVersionRestoreRequest: (payload) => {
-    console.log('onVersionRestoreRequest payload', payload, 'isOwner=', isOwner, 'board=', board);
-    const { versionId, requestedBy, label } = payload;
-    if (!isOwner) return;
-    const ok = window.confirm(
-      `${requestedBy?.name || 'Пользователь'} хочет откатиться к версии ${
-        label || ('#' + versionId)
-      }. Выполнить откат для всех?`,
-    );
-    if (!ok) {
-      console.log('Owner declined restore');
-      return;
-    }
-    console.log('Owner accepted, calling restoreBoardVersion', {
-      boardUuid: board?.uuid,
-      versionId,
-    });
-    restoreBoardVersion(board.uuid, versionId)
-      .then((res) => {
-        console.log('restoreBoardVersion OK', res);
-      })
-      .catch((e) => {
-        console.error('Failed to restore version', e);
-        alert('Не удалось откатиться к версии');
-      });
-  },
+     onVersionRestoreRequest: (payload) => {
+         console.log('OWNER onVersionRestoreRequest payload', payload);
+       const { versionId, requestedBy, label, requestedByClientId } = payload;
+       if (!isOwner) return;
+
+       const ok = window.confirm(
+         `${requestedBy?.name || 'Пользователь'} хочет откатиться к версии ${
+           label || ('#' + versionId)
+         }. Выполнить откат для всех?`,
+       );
+
+       if (!ok) {
+         sendStateRef.current?.({
+           type: 'VERSION_RESTORE_REJECTED',
+           payload: {
+             versionId,
+             label,
+             requestedByClientId,
+           },
+         });
+         return;
+       }
+
+       restoreBoardVersion(board.uuid, versionId)
+         .catch((e) => {
+           console.error('Failed to restore version', e);
+           alert('Не удалось откатиться к версии');
+         });
+     },
   setSendState: (fn) => {
     sendStateRef.current = fn;
   },
@@ -701,9 +942,9 @@ useBoardWs({
     !!currentUser && board && board.ownerId === currentUser.id;
     const boardCanEdit = useMemo(() => {
       if (!board) return false;
-      if (user && board.ownerId && user.id === board.ownerId) return true;
+      if (currentUser && board.ownerId && currentUser.id === board.ownerId) return true;
       return board.accessMode === 'LINK_EDIT';
-    }, [board, user]);
+    }, [board, currentUser]);
   const handleChangeAccess = async (newMode: 'PRIVATE' | 'LINK_VIEW' | 'LINK_EDIT') => {
     if (!board) return;
     try {
@@ -715,16 +956,20 @@ useBoardWs({
       console.error('Failed to update access mode', e);
     }
   };
-  const handleCopyLink = () => {
+  const handleCopyLink = async () => {
     if (!board) return;
-    const link = `${window.location.origin}/boards/${board.uuid}`;
-    navigator.clipboard.writeText(link).catch(err => console.error('Copy failed', err));
+    try {
+      await navigator.clipboard.writeText(
+        `${window.location.origin}/boards/${board.uuid}`,
+      );
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (e) {
+      console.error('Failed to copy link', e);
+      alert('Не удалось скопировать ссылку');
+    }
   };
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
-  const [historyIndex, setHistoryIndex] = useState<number>(-1);
-  const canUndo = historyIndex >= 0;
-  const canRedo = historyIndex < history.length - 1;
-  const showHistoryControls = !!board;
+
   const ShapeMenuItem: React.FC<{
     label: string;
     kind: ShapeKind;
@@ -871,10 +1116,49 @@ useBoardWs({
       </button>
     );
   };
-   console.log('BoardPage user/board', { currentUser, ownerId: board?.ownerId });
-  console.log('RENDER BoardPage', { loading, board });
+
+   if (accessDenied) {
+     return (
+       <div
+         style={{
+           display: 'flex',
+           width: '100vw',
+           height: '100vh',
+           alignItems: 'center',
+           justifyContent: 'center',
+           flexDirection: 'column',
+           background: '#f5f5f5',
+           color: '#111827',
+           fontFamily:
+             'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+         }}
+       >
+         <div
+           style={{
+             padding: '24px 32px',
+             background: '#ffffff',
+             borderRadius: 12,
+             boxShadow: '0 10px 40px rgba(15,23,42,0.12)',
+             maxWidth: 480,
+             textAlign: 'center',
+           }}
+         >
+           <h1 style={{ fontSize: 24, marginBottom: 8 }}>Доступ запрещён</h1>
+           <p style={{ fontSize: 14, color: '#6b7280', marginBottom: 8 }}>
+             Владелец ограничил доступ к этой доске. Сейчас режим доступа — только для владельца.
+           </p>
+           <p style={{ fontSize: 13, color: '#9ca3af', marginBottom: 4 }}>
+             Код ошибки: {accessDeniedStatus ?? '—'}
+           </p>
+           <p style={{ fontSize: 13, color: '#9ca3af' }}>
+             Если вы считаете, что это ошибка, обратитесь к владельцу доски и попросите выдать вам доступ.
+           </p>
+         </div>
+       </div>
+     );
+   }
   if (loading || !board) return <div>Загрузка...</div>;
-console.log('HISTORY', historyIndex, history);
+
   return (
       <div
         style={{
@@ -1669,6 +1953,7 @@ console.log('HISTORY', historyIndex, history);
           transformElementOnServer={transformElementOnServer}
           displayName={displayName}
           getUserColor={getUserColor}
+          getUserName={getUserName}
         />
       </div>
         {needName && (
@@ -2029,19 +2314,8 @@ console.log('HISTORY', historyIndex, history);
                   Выйти из превью
                 </button>
                 <button
-                  type="button"
-                  onClick={() => {
-                    if (!selectedVersionId) {
-                      alert('Версия не выбрана');
-                      return;
-                    }
-                    sendStateRef.current?.({
-                      type: 'REQUEST_VERSION_RESTORE',
-                      versionId: selectedVersionId,
-                      label: `версия #${selectedVersionId}`,
-                    });
-                    setVersionRequestSent(true);
-                  }}
+                    type="button"
+                    onClick={handleRequestRestore}
                   style={{
                     padding: '4px 8px',
                     borderRadius: 6,
@@ -2087,7 +2361,7 @@ console.log('HISTORY', historyIndex, history);
     />
   </div>
 )}
-{shareOpen && (
+{shareOpen && board && (
   <div
     style={{
       position: 'fixed',
@@ -2133,6 +2407,7 @@ console.log('HISTORY', historyIndex, history);
           ×
         </button>
       </div>
+
       <div style={{ marginBottom: 12 }}>
         <div
           style={{
@@ -2143,6 +2418,7 @@ console.log('HISTORY', historyIndex, history);
         >
           Ссылка на доску
         </div>
+
         <div
           style={{
             display: 'flex',
@@ -2170,15 +2446,16 @@ console.log('HISTORY', historyIndex, history);
               borderRadius: 6,
               border: 'none',
               background: '#2563eb',
-              color: '#000000',
+              color: '#ffffff',
               fontSize: 12,
               cursor: 'pointer',
             }}
           >
-            Копировать
+            {copied ? 'Скопировано' : 'Копировать'}
           </button>
         </div>
       </div>
+
       <div>
         <div
           style={{
@@ -2189,8 +2466,10 @@ console.log('HISTORY', historyIndex, history);
         >
           Доступ по ссылке
         </div>
+
         {isOwner ? (
           <select
+            disabled={updatingAccess}
             value={board.accessMode}
             onChange={(e) =>
               handleChangeAccess(
@@ -2216,6 +2495,18 @@ console.log('HISTORY', historyIndex, history);
               : board.accessMode === 'LINK_VIEW'
               ? 'По ссылке — только просмотр'
               : 'По ссылке — редактирование'}
+          </div>
+        )}
+
+        {!isOwner && (
+          <div
+            style={{
+              marginTop: 8,
+              fontSize: 12,
+              color: '#6b7280',
+            }}
+          >
+            Только владелец доски может изменять права доступа.
           </div>
         )}
       </div>

@@ -75,7 +75,7 @@ public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
 
         String jwt = jwtService.generateToken(user);
 
-        String redirectUrl = "http://localhost:5173/oauth2/success?token=" +
+        String redirectUrl = "https://192.168.0.4:5173/oauth2/success?token=" +
                 URLEncoder.encode(jwt, StandardCharsets.UTF_8);
         response.sendRedirect(redirectUrl);
     }

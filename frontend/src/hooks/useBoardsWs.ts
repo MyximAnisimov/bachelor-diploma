@@ -1,6 +1,6 @@
 import { Client, IMessage } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { clientId } from '../api/clientId';
 
 interface UseBoardWsParams {
@@ -13,9 +13,9 @@ interface UseBoardWsParams {
   onCallMessage?: (msg: any) => void;
   setSendCall?: (fn: (msg: any) => void) => void;
   onBoardResetMessage?: (elements: any[]) => void;
-
   onVersionRestoreRequest?: (payload: any) => void;
   onVersionRestoreApproved?: (payload: any) => void;
+  onVersionRestoreRejected?: (payload: any) => void;
   setSendState?: (fn: (msg: any) => void) => void;
 }
 
@@ -40,33 +40,66 @@ export function useBoardWs({
   onBoardResetMessage,
   onVersionRestoreRequest,
   onVersionRestoreApproved,
+  onVersionRestoreRejected,
   setSendState,
 }: UseBoardWsParams) {
+  const onLockMessageRef = useRef(onLockMessage);
+  const onCursorMessageRef = useRef(onCursorMessage);
+  const onElementMessageRef = useRef(onElementMessage);
+  const onRtcMessageRef = useRef(onRtcMessage);
+  const onCallMessageRef = useRef(onCallMessage);
+  const onBoardResetMessageRef = useRef(onBoardResetMessage);
+  const onVersionRestoreRequestRef = useRef(onVersionRestoreRequest);
+  const onVersionRestoreApprovedRef = useRef(onVersionRestoreApproved);
+  const onVersionRestoreRejectedRef = useRef(onVersionRestoreRejected);
+  const setSendRtcRef = useRef(setSendRtc);
+  const setSendCallRef = useRef(setSendCall);
+  const setSendStateRef = useRef(setSendState);
+
   useEffect(() => {
-    if (!boardUuid) {
-      return;
-    }
+    onLockMessageRef.current = onLockMessage;
+    onCursorMessageRef.current = onCursorMessage;
+    onElementMessageRef.current = onElementMessage;
+    onRtcMessageRef.current = onRtcMessage;
+    onCallMessageRef.current = onCallMessage;
+    onBoardResetMessageRef.current = onBoardResetMessage;
+    onVersionRestoreRequestRef.current = onVersionRestoreRequest;
+    onVersionRestoreApprovedRef.current = onVersionRestoreApproved;
+    onVersionRestoreRejectedRef.current = onVersionRestoreRejected;
+    setSendRtcRef.current = setSendRtc;
+    setSendCallRef.current = setSendCall;
+    setSendStateRef.current = setSendState;
+  }, [
+    onLockMessage,
+    onCursorMessage,
+    onElementMessage,
+    onRtcMessage,
+    onCallMessage,
+    onBoardResetMessage,
+    onVersionRestoreRequest,
+    onVersionRestoreApproved,
+    onVersionRestoreRejected,
+    setSendRtc,
+    setSendCall,
+    setSendState,
+  ]);
+
+  useEffect(() => {
+    if (!boardUuid) return;
 
     const token = localStorage.getItem('token');
+    const WS_BASE_URL =
+      import.meta.env.VITE_WS_BASE_URL || import.meta.env.VITE_API_BASE_URL;
 
     const client = new Client({
-      webSocketFactory: () => new SockJS('http://localhost:8080/ws'),
+      webSocketFactory: () => new SockJS(`${WS_BASE_URL}/ws`),
       reconnectDelay: 5000,
-      debug: (str) => {
-        console.log('STOMP:', str);
-      },
-      connectHeaders: token
-        ? {
-            Authorization: `Bearer ${token}`,
-          }
-        : {},
+      connectHeaders: token ? { Authorization: `Bearer ${token}` } : {},
     });
 
     stompClient = client;
 
     client.onConnect = () => {
-      console.log('STOMP connected');
-
       pendingLocks.forEach((msg) => {
         client.publish({
           destination: '/app/board.lock',
@@ -75,96 +108,77 @@ export function useBoardWs({
       });
       pendingLocks.length = 0;
 
-      client.subscribe(
-        `/topic/boards/${boardUuid}/locks`,
-        (message: IMessage) => {
-          const body = JSON.parse(message.body);
-          onLockMessage(body);
-        },
-      );
-
-      client.subscribe(
-        `/topic/boards/${boardUuid}/cursors`,
-        (message: IMessage) => {
-          const body = JSON.parse(message.body);
-          onCursorMessage(body);
-        },
-      );
-
-      client.subscribe(
-        `/topic/boards/${boardUuid}/elements`,
-        (message: IMessage) => {
-          const body = JSON.parse(message.body);
-          onElementMessage(body);
-        },
-      );
-
-      client.subscribe(
-        `/topic/boards/${boardUuid}/state`,
-        (message: IMessage) => {
-          const body = JSON.parse(message.body);
-          console.log('STATE MSG', body);
-
-          if (body.type === 'BOARD_RESET_TO_VERSION') {
-            const elements = body.payload?.elements ?? [];
-            onBoardResetMessage?.(elements);
-            return;
-          }
-
-          if (body.type === 'VERSION_RESTORE_REQUEST') {
-            onVersionRestoreRequest?.(body.payload);
-            return;
-          }
-
-          if (body.type === 'VERSION_RESTORE_APPROVED') {
-            onVersionRestoreApproved?.(body.payload);
-            return;
-          }
-        },
-      );
-
-      if (onRtcMessage) {
-        client.subscribe(`/topic/boards/${boardUuid}/rtc`, (frame) => {
-          const msg = JSON.parse(frame.body);
-          onRtcMessage(msg);
-        });
-      }
-      if (onCallMessage) {
-        client.subscribe(`/topic/boards/${boardUuid}/call`, (frame) => {
-          const msg = JSON.parse(frame.body);
-          onCallMessage(msg);
-        });
-      }
-      if (setSendRtc) {
-        setSendRtc((msg: any) => {
-          if (!stompClient || !stompClient.connected) return;
-          stompClient.publish({
-            destination: '/app/boards/rtc',
-            body: JSON.stringify(msg),
-          });
-        });
-      }
-      if (setSendCall) {
-        setSendCall((msg: any) => {
-          if (!stompClient || !stompClient.connected) return;
-          stompClient.publish({
-            destination: '/app/boards/call',
-            body: JSON.stringify(msg),
-          });
-        });
-      }
-
-    const sendState = (msg: any) => {
-      if (!stompClient || !stompClient.connected) return;
-      stompClient.publish({
-        destination: `/app/boards/${boardUuid}/state`,
-        body: JSON.stringify(msg),
+      client.subscribe(`/topic/boards/${boardUuid}/locks`, (message: IMessage) => {
+        const body = JSON.parse(message.body);
+        onLockMessageRef.current?.(body);
       });
-    };
 
-    if (setSendState) {
-      setSendState(sendState);
-    }
+      client.subscribe(`/topic/boards/${boardUuid}/cursors`, (message: IMessage) => {
+        const body = JSON.parse(message.body);
+        onCursorMessageRef.current?.(body);
+      });
+
+      client.subscribe(`/topic/boards/${boardUuid}/elements`, (message: IMessage) => {
+        const body = JSON.parse(message.body);
+        onElementMessageRef.current?.(body);
+      });
+
+      client.subscribe(`/topic/boards/${boardUuid}/state`, (message: IMessage) => {
+        const body = JSON.parse(message.body);
+
+        if (body.type === 'BOARD_RESET_TO_VERSION') {
+          const elements = body.payload?.elements ?? [];
+          onBoardResetMessageRef.current?.(elements);
+          return;
+        }
+        if (body.type === 'VERSION_RESTORE_REQUEST') {
+          onVersionRestoreRequestRef.current?.(body.payload);
+          return;
+        }
+        if (body.type === 'VERSION_RESTORE_APPROVED') {
+          onVersionRestoreApprovedRef.current?.(body.payload);
+          return;
+        }
+        if (body.type === 'VERSION_RESTORE_REJECTED') {
+          onVersionRestoreRejectedRef.current?.(body.payload);
+          return;
+        }
+      });
+
+      client.subscribe(`/topic/boards/${boardUuid}/rtc`, (frame) => {
+        const msg = JSON.parse(frame.body);
+        onRtcMessageRef.current?.(msg);
+      });
+
+      client.subscribe(`/topic/boards/${boardUuid}/call`, (frame) => {
+        const msg = JSON.parse(frame.body);
+        onCallMessageRef.current?.(msg);
+      });
+
+      setSendRtcRef.current?.((msg: any) => {
+        if (!client.connected) return;
+        client.publish({
+          destination: '/app/boards/rtc',
+          body: JSON.stringify(msg),
+        });
+      });
+
+      setSendCallRef.current?.((msg: any) => {
+        if (!client.connected) return;
+        client.publish({
+          destination: '/app/boards/call',
+          body: JSON.stringify(msg),
+        });
+      });
+
+      setSendStateRef.current?.((msg: any) => {
+        if (!client.connected) return;
+        console.log('SEND STATE', JSON.stringify(msg));
+        client.publish({
+          destination: `/app/boards/${boardUuid}/state`,
+          body: JSON.stringify(msg),
+        });
+      });
     };
 
     client.onStompError = (frame) => {
@@ -183,16 +197,7 @@ export function useBoardWs({
         stompClient = null;
       }
     };
-  }, [
-    boardUuid,
-    onLockMessage,
-    onCursorMessage,
-    onElementMessage,
-    onRtcMessage,
-    setSendRtc,
-      onCallMessage,
-      setSendCall,
-  ]);
+  }, [boardUuid]);
 }
 
 export function sendLock(

@@ -1,4 +1,4 @@
-package com.example.demo.dto;
+package com.example.demo.dto.response;
 
 import lombok.Getter;
 import lombok.Setter;
@@ -8,7 +8,4 @@ import lombok.Setter;
 public class AiChatResponse {
     private String assistantId;
     private String response;
-
-    // можно добавить usage, errorMessage и т.п.
-    // геттеры/сеттеры
 }

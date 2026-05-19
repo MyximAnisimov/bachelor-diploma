@@ -1,13 +1,11 @@
 package com.example.demo.service.ai;
 
 import com.example.demo.config.AiProperties;
-//import com.example.demo.config.InsecureRestTemplateFactory;
-import com.example.demo.dto.AiChatRequest;
-import com.example.demo.dto.AiChatResponse;
+import com.example.demo.dto.request.AiChatRequest;
+import com.example.demo.dto.response.AiChatResponse;
 import org.springframework.http.*;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
-import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.List;

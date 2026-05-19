@@ -1,8 +1,8 @@
 package com.example.demo.service.ai;
 
 import com.example.demo.config.AiProperties;
-import com.example.demo.dto.AiChatRequest;
-import com.example.demo.dto.AiChatResponse;
+import com.example.demo.dto.request.AiChatRequest;
+import com.example.demo.dto.response.AiChatResponse;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;

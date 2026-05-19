@@ -1,16 +1,16 @@
 package com.example.demo.controller;
 
-import com.example.demo.dto.BoardElementCreateRequest;
+import com.example.demo.dto.request.BoardElementCreateRequest;
 import com.example.demo.dto.BoardElementDto;
-import com.example.demo.dto.BoardElementUpdateRequest;
-import com.example.demo.dto.CopyElementsRequest;
-import com.example.demo.dto.CopyElementsResponse;
-import com.example.demo.dto.ElementLockRequest;
-import com.example.demo.dto.ElementTransformRequest;
-import com.example.demo.dto.GroupElementsRequest;
-import com.example.demo.dto.GroupElementsResponse;
-import com.example.demo.dto.ReorderElementsRequest;
-import com.example.demo.dto.UngroupElementsRequest;
+import com.example.demo.dto.request.BoardElementUpdateRequest;
+import com.example.demo.dto.request.CopyElementsRequest;
+import com.example.demo.dto.response.CopyElementsResponse;
+import com.example.demo.dto.request.ElementLockRequest;
+import com.example.demo.dto.request.ElementTransformRequest;
+import com.example.demo.dto.request.GroupElementsRequest;
+import com.example.demo.dto.response.GroupElementsResponse;
+import com.example.demo.dto.request.ReorderElementsRequest;
+import com.example.demo.dto.request.UngroupElementsRequest;
 import com.example.demo.service.BoardElementService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;

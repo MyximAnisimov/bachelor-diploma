@@ -1,33 +1,23 @@
-package com.example.demo.dto;
+package com.example.demo.dto.request;
 
-import com.example.demo.model.BoardElement.ElementType;
 import com.fasterxml.jackson.databind.JsonNode;
-import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 @Data
-public class BoardElementCreateRequest {
+public class BoardElementUpdateRequest {
 
-    @NotNull
-    private ElementType type;
-
-    @NotNull
     private Double x;
-
-    @NotNull
     private Double y;
-
-    @NotNull
     private Double width;
-
-    @NotNull
     private Double height;
-
     private Double rotation;
 
     private Integer zIndex;
 
     private String groupId;
+
+    private Boolean lockedPosition;
+    private Boolean lockedEditing;
 
     private Long mediaId;
 

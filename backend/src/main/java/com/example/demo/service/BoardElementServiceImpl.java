@@ -1,17 +1,17 @@
 package com.example.demo.service;
 
-import com.example.demo.dto.BoardElementCreateRequest;
+import com.example.demo.dto.request.BoardElementCreateRequest;
 import com.example.demo.dto.BoardElementDto;
-import com.example.demo.dto.BoardElementUpdateRequest;
-import com.example.demo.dto.CopyElementsRequest;
-import com.example.demo.dto.CopyElementsResponse;
-import com.example.demo.dto.ElementLockRequest;
+import com.example.demo.dto.request.BoardElementUpdateRequest;
+import com.example.demo.dto.request.CopyElementsRequest;
+import com.example.demo.dto.response.CopyElementsResponse;
+import com.example.demo.dto.request.ElementLockRequest;
 import com.example.demo.dto.ElementOrderDto;
-import com.example.demo.dto.ElementTransformRequest;
-import com.example.demo.dto.GroupElementsRequest;
-import com.example.demo.dto.GroupElementsResponse;
-import com.example.demo.dto.ReorderElementsRequest;
-import com.example.demo.dto.UngroupElementsRequest;
+import com.example.demo.dto.request.ElementTransformRequest;
+import com.example.demo.dto.request.GroupElementsRequest;
+import com.example.demo.dto.response.GroupElementsResponse;
+import com.example.demo.dto.request.ReorderElementsRequest;
+import com.example.demo.dto.request.UngroupElementsRequest;
 import com.example.demo.dto.ws.ElementUpdatedMessage;
 import com.example.demo.exception.NotFoundException;
 import com.example.demo.mapper.BoardElementMapper;
@@ -459,31 +459,42 @@ public class BoardElementServiceImpl implements BoardElementService {
     @Override
     @Transactional
     public void deleteElement(UUID boardUuid, Long elementId) {
-        BoardElement element = elementRepository.findById(elementId)
-                .orElseThrow(() -> new IllegalArgumentException("Элемент не найден"));
+        try {
+            if (!elementRepository.existsById(elementId)) {
+                return;
+            }
 
-        Board board = element.getBoard();
-        User currentUserOrNull = getCurrentUserOrNull();
+            BoardElement element = elementRepository.findById(elementId)
+                    .orElse(null);
+            if (element == null) {
+                return;
+            }
 
-        if (!boardService.canEdit(board, currentUserOrNull)) {
-            throw new SecurityException("Нет прав на редактирование этой доски");
+            Board board = element.getBoard();
+
+            User currentUserOrNull = getCurrentUserOrNull();
+            if (!boardService.canEdit(board, currentUserOrNull)) {
+                throw new SecurityException("Нет прав на редактирование этой доски");
+            }
+
+            BoardElementDto beforeDto = elementMapper.toDto(element);
+
+            elementRepository.deleteById(elementId);
+
+            saveHistory(board, elementId, BoardHistoryEvent.EventType.ELEMENT_DELETED, beforeDto, null);
+
+            ElementUpdatedMessage msg = new ElementUpdatedMessage();
+            msg.setBoardUuid(boardUuid);
+            msg.setElement(beforeDto);
+            msg.setAction("DELETE");
+            messagingTemplate.convertAndSend(
+                    "/topic/boards/" + boardUuid + "/elements",
+                    msg
+            );
+
+        } catch (org.springframework.orm.ObjectOptimisticLockingFailureException
+                 | org.hibernate.StaleObjectStateException ex) {
         }
-
-        BoardElementDto beforeDto = elementMapper.toDto(element);
-
-        elementRepository.delete(element);
-
-        saveHistory(board, elementId, BoardHistoryEvent.EventType.ELEMENT_DELETED, beforeDto, null);
-
-        ElementUpdatedMessage msg = new ElementUpdatedMessage();
-        msg.setBoardUuid(boardUuid);
-        msg.setElement(beforeDto);
-        msg.setAction("DELETE");
-
-        messagingTemplate.convertAndSend(
-                "/topic/boards/" + boardUuid + "/elements",
-                msg
-        );
     }
 
     @Override

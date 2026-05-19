@@ -1,8 +1,8 @@
 package com.example.demo.controller;
 
 import com.example.demo.dto.AiAssistantDto;
-import com.example.demo.dto.AiChatRequest;
-import com.example.demo.dto.AiChatResponse;
+import com.example.demo.dto.request.AiChatRequest;
+import com.example.demo.dto.response.AiChatResponse;
 import com.example.demo.service.ai.AiGatewayService;
 import org.springframework.web.bind.annotation.*;
 
